@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Black Hole</title>
+    <style>
+      html, body {
+        margin: 0;
+        padding: 0;
+        background: #000;
+        overflow: hidden;
+        height: 100%;
+        width: 100%;
+        font-family: -apple-system, system-ui, sans-serif;
+        color: #ccc;
+      }
+      canvas {
+        display: block;
+        width: 100vw;
+        height: 100vh;
+      }
+      #hud {
+        position: fixed;
+        top: 8px;
+        left: 8px;
+        font-size: 12px;
+        opacity: 0.6;
+        pointer-events: none;
+        text-shadow: 0 0 4px #000;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="gl"></canvas>
+    <div id="hud">drag: orbit · wheel: zoom</div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
