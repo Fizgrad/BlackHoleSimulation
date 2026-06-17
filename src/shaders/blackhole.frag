@@ -107,18 +107,27 @@ float ridged(vec3 p, int octaves) {
 // --- starfield ----------------------------------------------------------
 
 vec3 starColor(float t) {
-  // Realistic stellar population: M+K dwarfs dominate (~85%), G/F yellow
-  // ~10%, A white ~3%, B/O blue rare ~2%. Map t through a curve so most
-  // stars come out warm.
+  // Naked-eye visible stars (apparent magnitude < ~6.5): biased toward
+  // F/G/K main sequence + a long bright tail of giants/supergiants.
+  // Red dwarfs are far too dim to see, so the t->color map should
+  // produce mostly white-yellow, with substantial orange/red giant
+  // contribution (Betelgeuse, Antares, Aldebaran), and a small blue/B-A
+  // fraction (Rigel, Vega, Sirius).
+  //   t < 0.10  : blue / blue-white  (B/O ~10%)
+  //   0.10-0.30 : white              (A   ~20%)
+  //   0.30-0.65 : yellow-white       (F/G ~35%)
+  //   0.65-0.85 : orange             (K   ~20%)
+  //   > 0.85    : red                (M giants ~15%)
   vec3 blue   = vec3(0.55, 0.70, 1.00);
   vec3 white  = vec3(0.95, 0.97, 1.00);
   vec3 yellow = vec3(1.00, 0.95, 0.80);
   vec3 orange = vec3(1.00, 0.78, 0.55);
   vec3 red    = vec3(1.00, 0.55, 0.40);
-  if (t < 0.05) return mix(blue,   white,  t / 0.05);
-  if (t < 0.15) return mix(white,  yellow, (t - 0.05) / 0.10);
-  if (t < 0.45) return mix(yellow, orange, (t - 0.15) / 0.30);
-  return                 mix(orange, red,   (t - 0.45) / 0.55);
+  if (t < 0.10) return mix(blue,   white,  t / 0.10);
+  if (t < 0.30) return mix(white,  yellow, (t - 0.10) / 0.20);
+  if (t < 0.65) return mix(yellow, orange, (t - 0.30) / 0.35);
+  if (t < 0.85) return mix(orange, red,    (t - 0.65) / 0.20);
+  return red;
 }
 
 // One angular grid layer of stars with realistic magnitude distribution.
@@ -173,11 +182,10 @@ vec3 starLayer(vec3 dir, float density, float scale, float seed,
         spike = (sx + sy) * (magRaw - 0.75) * 5.0;
       }
 
-      // Star colour: blue stars are intrinsically brighter, so brighter
-      // stars are biased blueward; faint stars are mostly M-dwarf red.
-      // Combine the per-cell colour-class hash with a brightness shift.
+      // Star colour: independent of brightness. Bright stars include
+      // both blue supergiants (Rigel) and red supergiants (Betelgeuse,
+      // Antares, Aldebaran), so the colour-class hash is used directly.
       float colourClass = hash21(cell + seed + 31.7);
-      colourClass = mix(colourClass, 0.05, magRaw * 0.6);
       vec3 tint = starColor(colourClass);
 
       col += tint * (core + halo + spike);
