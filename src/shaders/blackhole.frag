@@ -501,61 +501,122 @@ vec3 haloGlow(vec3 p, vec3 viewDir) {
 }
 
 // Relativistic jet: two collimated plasma beams along +/-Y, launched
-// just outside the event horizon. Returns emission rate per unit length
-// (already integrated by the caller along the geodesic segment).
+// just outside the event horizon. Returns emission rate per unit length.
 //
-// Shape: cone along Y axis, opening half-angle ~10-15 deg. Density falls
-// off as 1/d (along axis), gaussian transverse to axis. Color is hot
-// blue-white near the launch point fading to magenta-pink at large d.
-// Filamentary FBM noise gives stringy synchrotron-like structure.
-vec3 jetSample(vec3 p) {
-  float y    = p.y;
-  float ay   = abs(y);
-  // Launch point sits a couple rs above the horizon.
-  float launch = u_rs * 1.8;
+// Detailed model:
+//   - Tight collimated base (cylindrical) opening into a cone after a few rs
+//   - Kink-instability wobble of the central axis (multi-scale sinusoidal)
+//   - Limb-brightened transverse profile (optically thin tube look)
+//   - Periodic knots along the flow (bright nodes, like M87 jet)
+//   - Termination shock / hot spot at the far end
+//   - Multi-frequency turbulence (FBM + ridged filaments)
+//   - Doppler beaming asymmetry: approaching jet much brighter than receding
+//   - Spectral aging colour gradient: blue-white -> magenta-pink -> deep red
+vec3 jetSample(vec3 p, vec3 viewDir) {
+  float y       = p.y;
+  float ay      = abs(y);
+  float dirSign = sign(y);                         // +1 upper, -1 lower
+  float launch  = u_rs * 1.6;
   if (ay < launch) return vec3(0.0);
 
-  float along = ay - launch;                     // dist along axis from launch
-  if (along > 60.0 * u_rs) return vec3(0.0);     // truncate far field
+  float along = ay - launch;
+  if (along > 80.0 * u_rs) return vec3(0.0);
 
-  // Cone opening: jet widens with along distance.
-  float coneR = launch * 0.18 + along * 0.13;
-  float radial = length(p.xz);
-  if (radial > coneR * 2.5) return vec3(0.0);
+  // --- kink-instability wobble of the central axis ---------------------
+  // The jet axis itself wobbles laterally with along-distance. Two
+  // frequencies stacked + slow time evolution keeps it organic.
+  float ph1 = along * 0.18 + u_time * 0.30 * dirSign;
+  float ph2 = along * 0.07 + u_time * 0.15 * dirSign + 1.7;
+  vec2 wobble = vec2(sin(ph1), cos(ph1 * 1.3 + 0.7)) * (u_rs * 0.18);
+  wobble    += vec2(sin(ph2 * 0.6), cos(ph2)) * (u_rs * 0.45);
+  // Wobble grows in from base (jet is anchored at launch).
+  wobble *= smoothstep(0.0, 6.0 * u_rs, along);
 
-  // Transverse profile: bright core + soft sheath.
-  float core   = exp(-(radial * radial) / (coneR * coneR * 0.25));
-  float sheath = exp(-(radial * radial) / (coneR * coneR * 1.4));
+  vec2 offset  = p.xz - wobble;
+  float radial = length(offset);
 
-  // Along-axis taper: peaks just outside launch, fades with distance.
-  float launchTaper = smoothstep(0.0, launch * 0.5, along);
-  float farFade     = 1.0 / (1.0 + along * 0.06);
-  float axial = launchTaper * farFade;
+  // --- collimation: nearly cylindrical at base, conical past few rs ----
+  float baseR    = launch * 0.16;
+  float opening  = max(0.0, along - 6.0 * u_rs) * 0.08;
+  float coneR    = baseR + opening;
+  if (radial > coneR * 2.2) return vec3(0.0);
 
-  // Filamentary structure via FBM in cylindrical-ish coords.
-  // Spiral the noise along the axis so the jet looks helically structured.
-  float spiral = atan(p.z, p.x) + along * 0.55 + u_time * 0.6 * sign(y);
-  vec3 fp;
-  fp.x = cos(spiral) * radial * 1.4;
-  fp.y = sin(spiral) * radial * 1.4;
-  fp.z = along * 0.6 + u_time * 0.4 * sign(y);
-  float n = fbm(fp, 4);
-  float structure = mix(0.55, 1.25, n);
+  // --- transverse profile: limb-brightened tube ------------------------
+  // Optically thin synchrotron emission viewed transverse to a cylinder
+  // peaks near the limb. Approximation: 1/sqrt(1-r^2) profile capped, plus
+  // a softer central spine for visibility.
+  float rn = radial / coneR;
+  float limbCore = (rn < 0.97) ? inversesqrt(max(1.0 - rn * rn, 0.06)) : 0.0;
+  float limb = limbCore * exp(-rn * rn * 1.2);
+  float spine = exp(-rn * rn * 5.0);
+  float transverse = limb * 0.35 + spine * 0.55;
 
-  float dens = (core * 0.85 + sheath * 0.25) * axial * structure;
+  // --- along-axis envelope ---------------------------------------------
+  float launchRamp = smoothstep(0.0, launch * 0.4, along);
+  float farFade    = 1.0 / (1.0 + along * 0.045);
+  // Periodic knots: bright nodes at fixed intervals along the jet,
+  // slowly drifting outward over time (advected with the flow).
+  float knotPhase = along * 0.32 - u_time * 0.7;
+  float knots = pow(0.5 + 0.5 * sin(knotPhase), 6.0);
+  // Bigger, rarer hotspots
+  float bigKnotPhase = along * 0.10 - u_time * 0.3;
+  float bigKnots = pow(0.5 + 0.5 * sin(bigKnotPhase + 0.5), 8.0);
+  float knotBoost = 1.0 + knots * 0.9 + bigKnots * 1.6;
 
-  // Color: hot blue-white near launch -> pink/magenta with distance
-  // (synchrotron self-Compton fade). Mild outward tint for spread.
-  float t = clamp(along * 0.04, 0.0, 1.0);
-  vec3 hot   = vec3(0.70, 0.90, 1.30);
-  vec3 mid   = vec3(0.95, 0.85, 1.10);
-  vec3 cool  = vec3(1.10, 0.55, 0.85);
-  vec3 tint  = mix(mix(hot, mid, smoothstep(0.0, 0.4, t)),
-                   cool,
-                   smoothstep(0.4, 1.0, t));
+  // Termination shock at the far end.
+  float termDist = along - 60.0 * u_rs;
+  float term = exp(-(termDist * termDist) / (140.0));
+  // Working surface: termination shock + cocoon ring around it
+  float cocoon = exp(-rn * rn * 0.6) * term * 0.9;
 
-  // Boost for the bright inner core.
-  return tint * dens * 1.2;
+  float axial = launchRamp * farFade * knotBoost;
+
+  // --- multi-frequency turbulence --------------------------------------
+  float spiral = atan(offset.y, offset.x) + along * 0.6 + u_time * 0.5 * dirSign;
+  vec3 fp1 = vec3(cos(spiral) * radial, sin(spiral) * radial, along * 0.55) * 1.4;
+  vec3 fp2 = vec3(p.x, along * 0.3, p.z) * 2.6 - vec3(0.0, u_time * 0.35, 0.0) * dirSign;
+  float n1  = fbm(fp1, 4);
+  float n2  = fbm(fp2, 3);
+  float fil = ridged(fp1 * 1.6 + 7.7, 4);
+  float kh  = ridged(vec3(spiral * 1.5, along * 0.4, radial * 4.0) - dirSign * u_time * 0.3, 3);
+  float turbulence = mix(0.55, 1.30, n1) * mix(0.75, 1.15, n2) * mix(0.7, 1.25, fil);
+  // Kelvin-Helmholtz mushrooms strongest at the jet boundary.
+  turbulence *= mix(1.0, mix(0.6, 1.4, kh), smoothstep(0.6, 1.0, rn));
+
+  float dens = transverse * axial * turbulence + cocoon;
+
+  // --- Doppler beaming asymmetry ---------------------------------------
+  // Bulk plasma flows along (0, dirSign, 0). Boost = 1 / (gamma * (1 - mu*beta))^3
+  // for bolometric. viewDir points from sample toward camera (set by caller).
+  float beta = 0.92;                                 // bulk Lorentz beta
+  float gamma = 1.0 / sqrt(max(1.0 - beta * beta, 1e-4));
+  // mu = cos(angle between flow and ray-back-to-camera). When jet flows
+  // toward camera, mu>0, large boost. When away, mu<0, dimming.
+  float mu = dot(vec3(0.0, dirSign, 0.0), viewDir);
+  float D = 1.0 / max(gamma * (1.0 - mu * beta), 1e-3);
+  float beam = pow(D, 3.0);
+
+  // --- colour: spectral aging gradient + Doppler colour shift ----------
+  // Hot blue near launch (fresh electrons), magenta-pink mid (synchrotron
+  // self-Compton), deep red far (cooled, ageing population).
+  float t = clamp(along / (60.0 * u_rs), 0.0, 1.0);
+  vec3 hot  = vec3(0.65, 0.88, 1.35);
+  vec3 mid  = vec3(0.95, 0.75, 1.05);
+  vec3 cool = vec3(1.10, 0.45, 0.55);
+  vec3 deep = vec3(0.55, 0.18, 0.30);
+  vec3 tint = mix(mix(hot, mid, smoothstep(0.0, 0.35, t)),
+                  mix(cool, deep, smoothstep(0.7, 1.0, t)),
+                  smoothstep(0.35, 0.7, t));
+
+  // Doppler frequency shift tint: approaching = bluer, receding = redder
+  vec3 dopShift = (D >= 1.0)
+    ? mix(vec3(1.0), vec3(0.75, 0.92, 1.25), clamp(D - 1.0, 0.0, 1.5))
+    : mix(vec3(1.30, 0.60, 0.45), vec3(1.0), clamp(D, 0.0, 1.0));
+
+  // Hot spot at termination shock looks white-hot.
+  vec3 termTint = mix(tint, vec3(1.10, 1.00, 0.85), term * 0.7);
+
+  return termTint * dopShift * dens * beam * 1.4;
 }
 
 struct Hit {
@@ -686,7 +747,9 @@ Hit traceRay(vec3 ro, vec3 rd) {
       vec3 jMid = 0.5 * (prevPos + pNext);
       vec3 segDir = pNext - prevPos;
       float segLen = length(segDir);
-      vec3 jE = jetSample(jMid);
+      // viewDir = direction from the sample back along the ray (toward camera).
+      vec3 jViewDir = -normalize(segDir);
+      vec3 jE = jetSample(jMid, jViewDir);
       if (jE.r + jE.g + jE.b > 1e-4) {
         h.diskCol += (1.0 - h.diskAlpha) * jE * segLen;
         // Jets are mostly emissive (low absorption); only nudge alpha
