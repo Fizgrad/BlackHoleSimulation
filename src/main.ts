@@ -302,12 +302,36 @@ function renderComposite(): void {
 
 function frame(): void {
   resize();
-  const t = (performance.now() - t0) * 0.001 + 42.0;
+  const now = performance.now();
+  const t = (now - t0) * 0.001 + 42.0;
 
   renderScene(t);
   renderBloom();
   renderComposite();
 
+  updateFps(now);
+
   requestAnimationFrame(frame);
+}
+
+// --- FPS HUD --------------------------------------------------------------
+
+const fpsEl = document.getElementById('fps');
+let lastFrameTime = performance.now();
+let emaFrameMs = 16.7; // smoothed frame time
+let lastFpsRefresh = 0;
+
+function updateFps(now: number): void {
+  const dt = now - lastFrameTime;
+  lastFrameTime = now;
+  if (dt > 0 && dt < 1000) {
+    // EMA with ~10-frame window for stability.
+    emaFrameMs += (dt - emaFrameMs) * 0.1;
+  }
+  if (fpsEl && now - lastFpsRefresh > 250) {
+    const fps = 1000 / Math.max(emaFrameMs, 0.01);
+    fpsEl.textContent = `${fps.toFixed(0).padStart(3, ' ')} fps  ${emaFrameMs.toFixed(1).padStart(4, ' ')} ms`;
+    lastFpsRefresh = now;
+  }
 }
 requestAnimationFrame(frame);
