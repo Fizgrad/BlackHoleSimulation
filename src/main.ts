@@ -1,17 +1,32 @@
 import vertSrc from './shaders/fullscreen.vert?raw';
-import fragSrc from './shaders/blackhole.frag?raw';
+import sceneFragSrc from './shaders/blackhole.frag?raw';
+import downsampleFragSrc from './shaders/bloom_downsample.frag?raw';
+import upsampleFragSrc from './shaders/bloom_upsample.frag?raw';
+import compositeFragSrc from './shaders/composite.frag?raw';
 import { createGL, createProgram, getUniformLocations } from './gl/program';
 import { createFullscreenTriangle } from './gl/quad';
+import {
+  bindRenderTarget,
+  checkFloatFBOSupport,
+  createRenderTarget,
+  resizeRenderTarget,
+} from './gl/fbo';
 import { createOrbitCamera, computeCameraBasis } from './scene/camera';
 
 const canvas = document.getElementById('gl') as HTMLCanvasElement | null;
 if (!canvas) throw new Error('canvas#gl not found');
 
 const gl = createGL(canvas);
-const program = createProgram(gl, vertSrc, fragSrc);
+checkFloatFBOSupport(gl);
+
+const sceneProgram = createProgram(gl, vertSrc, sceneFragSrc);
+const downsampleProgram = createProgram(gl, vertSrc, downsampleFragSrc);
+const upsampleProgram = createProgram(gl, vertSrc, upsampleFragSrc);
+const compositeProgram = createProgram(gl, vertSrc, compositeFragSrc);
+
 const vao = createFullscreenTriangle(gl);
 
-const U = getUniformLocations(gl, program, [
+const U = getUniformLocations(gl, sceneProgram, [
   'u_resolution',
   'u_time',
   'u_camPos',
@@ -33,6 +48,10 @@ const U = getUniformLocations(gl, program, [
   'u_starPos[5]',
   'u_starPos[6]',
   'u_starPos[7]',
+  'u_starPos[8]',
+  'u_starPos[9]',
+  'u_starPos[10]',
+  'u_starPos[11]',
   'u_starCol[0]',
   'u_starCol[1]',
   'u_starCol[2]',
@@ -41,8 +60,39 @@ const U = getUniformLocations(gl, program, [
   'u_starCol[5]',
   'u_starCol[6]',
   'u_starCol[7]',
+  'u_starCol[8]',
+  'u_starCol[9]',
+  'u_starCol[10]',
+  'u_starCol[11]',
   'u_starRadius',
 ] as const);
+
+const Udown = getUniformLocations(gl, downsampleProgram, [
+  'u_src',
+  'u_srcTexel',
+  'u_threshold',
+] as const);
+
+const Uup = getUniformLocations(gl, upsampleProgram, [
+  'u_src',
+  'u_srcTexel',
+  'u_radius',
+] as const);
+
+const Ucomp = getUniformLocations(gl, compositeProgram, [
+  'u_scene',
+  'u_bloom',
+  'u_bloomStrength',
+  'u_exposure',
+] as const);
+
+// --- render targets -----------------------------------------------------
+
+const BLOOM_MIPS = 5;
+let sceneRT = createRenderTarget(gl, 16, 16);
+const bloomMips = Array.from({ length: BLOOM_MIPS }, () =>
+  createRenderTarget(gl, 16, 16),
+);
 
 const cam = createOrbitCamera();
 
@@ -50,8 +100,8 @@ const physics = {
   rs: 1.0,
   diskInner: 3.0,
   diskOuter: 14.0,
-  maxSteps: 320,
-  dPhi: 0.04,
+  maxSteps: 400,
+  dPhi: 0.035,
 };
 
 // Orbiting stars: each has an orbital radius, angular speed, and color.
@@ -82,7 +132,16 @@ function resize(): void {
     canvas!.width = w;
     canvas!.height = h;
   }
-  gl.viewport(0, 0, canvas!.width, canvas!.height);
+
+  // Resize render targets to match.
+  resizeRenderTarget(gl, sceneRT, w, h);
+  let mw = w;
+  let mh = h;
+  for (let i = 0; i < BLOOM_MIPS; i++) {
+    mw = Math.max(1, Math.floor(mw / 2));
+    mh = Math.max(1, Math.floor(mh / 2));
+    resizeRenderTarget(gl, bloomMips[i], mw, mh);
+  }
 }
 
 window.addEventListener('resize', resize);
@@ -125,13 +184,13 @@ canvas.addEventListener(
   { passive: false },
 );
 
-// --- render loop ---------------------------------------------------------
+// --- one-time uniforms / VAO --------------------------------------------
 
 const t0 = performance.now();
-gl.useProgram(program);
 gl.bindVertexArray(vao);
 
-// static uniforms
+// Static scene uniforms (set once).
+gl.useProgram(sceneProgram);
 gl.uniform1f(U.u_rs, physics.rs);
 gl.uniform1f(U.u_diskInner, physics.diskInner);
 gl.uniform1f(U.u_diskOuter, physics.diskOuter);
@@ -143,7 +202,6 @@ gl.uniform1f(U.u_starRadius, 0.12);
 // Pre-allocate Float32Array for star position/color uploads.
 const starPosBuf = new Float32Array(3 * STAR_COUNT);
 const starColBuf = new Float32Array(3 * STAR_COUNT);
-// Pre-fill color buffer (static).
 for (let i = 0; i < STAR_COUNT; i++) {
   const c = stars[i];
   starColBuf[i * 3 + 0] = c.col[0];
@@ -151,25 +209,23 @@ for (let i = 0; i < STAR_COUNT; i++) {
   starColBuf[i * 3 + 2] = c.col[2];
 }
 
-function frame(): void {
-  resize();
+// --- render loop ---------------------------------------------------------
 
-  const t = (performance.now() - t0) * 0.001 + 42.0; // jump forward so disk looks evolved
+function renderScene(t: number): void {
   const basis = computeCameraBasis(cam);
 
-  // Update orbiting star positions.
   for (let i = 0; i < STAR_COUNT; i++) {
     const s = stars[i];
     const ang = s.speed * t + i * 1.8;
-    const x = s.r * Math.cos(ang);
-    const y = s.r * s.tilt * Math.sin(ang * 3.0); // slight off-plane wiggle
-    const z = s.r * Math.sin(ang);
-    starPosBuf[i * 3 + 0] = x;
-    starPosBuf[i * 3 + 1] = y;
-    starPosBuf[i * 3 + 2] = z;
+    starPosBuf[i * 3 + 0] = s.r * Math.cos(ang);
+    starPosBuf[i * 3 + 1] = s.r * s.tilt * Math.sin(ang * 3.0);
+    starPosBuf[i * 3 + 2] = s.r * Math.sin(ang);
   }
 
-  gl.uniform2f(U.u_resolution, canvas!.width, canvas!.height);
+  bindRenderTarget(gl, sceneRT);
+  gl.useProgram(sceneProgram);
+
+  gl.uniform2f(U.u_resolution, sceneRT.width, sceneRT.height);
   gl.uniform1f(U.u_time, t);
   gl.uniform3f(U.u_camPos, basis.pos[0], basis.pos[1], basis.pos[2]);
   gl.uniform3f(U.u_camForward, basis.forward[0], basis.forward[1], basis.forward[2]);
@@ -177,7 +233,6 @@ function frame(): void {
   gl.uniform3f(U.u_camUp, basis.up[0], basis.up[1], basis.up[2]);
   gl.uniform1f(U.u_fovTan, basis.fovTan);
 
-  // Upload star arrays.
   for (let i = 0; i < STAR_COUNT; i++) {
     const locP = U[`u_starPos[${i}]` as keyof typeof U];
     const locC = U[`u_starCol[${i}]` as keyof typeof U];
@@ -186,6 +241,72 @@ function frame(): void {
   }
 
   gl.drawArrays(gl.TRIANGLES, 0, 3);
+}
+
+const BLOOM_THRESHOLD = 1.0; // values above this get bloomed
+const BLOOM_RADIUS = 1.0;
+const BLOOM_STRENGTH = 0.08;
+const EXPOSURE = 1.0;
+
+function renderBloom(): void {
+  gl.useProgram(downsampleProgram);
+  gl.uniform1i(Udown.u_src, 0);
+
+  // Downsample chain. First mip applies bright-pass, others pass-through.
+  let srcTex = sceneRT.tex;
+  let srcW = sceneRT.width;
+  let srcH = sceneRT.height;
+  for (let i = 0; i < BLOOM_MIPS; i++) {
+    bindRenderTarget(gl, bloomMips[i]);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, srcTex);
+    gl.uniform2f(Udown.u_srcTexel, 1.0 / srcW, 1.0 / srcH);
+    gl.uniform1f(Udown.u_threshold, i === 0 ? BLOOM_THRESHOLD : -1.0);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    srcTex = bloomMips[i].tex;
+    srcW = bloomMips[i].width;
+    srcH = bloomMips[i].height;
+  }
+
+  // Upsample chain (additive blending into the larger mip).
+  gl.useProgram(upsampleProgram);
+  gl.uniform1i(Uup.u_src, 0);
+  gl.uniform1f(Uup.u_radius, BLOOM_RADIUS);
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.ONE, gl.ONE);
+  for (let i = BLOOM_MIPS - 1; i > 0; i--) {
+    const src = bloomMips[i];
+    const dst = bloomMips[i - 1];
+    bindRenderTarget(gl, dst);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, src.tex);
+    gl.uniform2f(Uup.u_srcTexel, 1.0 / src.width, 1.0 / src.height);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+  }
+  gl.disable(gl.BLEND);
+}
+
+function renderComposite(): void {
+  bindRenderTarget(gl, null, canvas!.width, canvas!.height);
+  gl.useProgram(compositeProgram);
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, sceneRT.tex);
+  gl.uniform1i(Ucomp.u_scene, 0);
+  gl.activeTexture(gl.TEXTURE1);
+  gl.bindTexture(gl.TEXTURE_2D, bloomMips[0].tex);
+  gl.uniform1i(Ucomp.u_bloom, 1);
+  gl.uniform1f(Ucomp.u_bloomStrength, BLOOM_STRENGTH);
+  gl.uniform1f(Ucomp.u_exposure, EXPOSURE);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+}
+
+function frame(): void {
+  resize();
+  const t = (performance.now() - t0) * 0.001 + 42.0;
+
+  renderScene(t);
+  renderBloom();
+  renderComposite();
 
   requestAnimationFrame(frame);
 }

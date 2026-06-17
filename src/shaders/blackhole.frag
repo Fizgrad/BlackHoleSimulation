@@ -39,7 +39,7 @@ uniform float u_diskOuter;
 uniform int   u_maxSteps;
 uniform float u_dPhi;
 
-#define STAR_MAX 8
+#define STAR_MAX 12
 uniform int   u_starCount;
 uniform vec3  u_starPos[STAR_MAX];
 uniform vec3  u_starCol[STAR_MAX];
@@ -500,6 +500,64 @@ vec3 haloGlow(vec3 p, vec3 viewDir) {
   return vec3(1.0, 0.55, 0.20) * shift * env * 0.18;
 }
 
+// Relativistic jet: two collimated plasma beams along +/-Y, launched
+// just outside the event horizon. Returns emission rate per unit length
+// (already integrated by the caller along the geodesic segment).
+//
+// Shape: cone along Y axis, opening half-angle ~10-15 deg. Density falls
+// off as 1/d (along axis), gaussian transverse to axis. Color is hot
+// blue-white near the launch point fading to magenta-pink at large d.
+// Filamentary FBM noise gives stringy synchrotron-like structure.
+vec3 jetSample(vec3 p) {
+  float y    = p.y;
+  float ay   = abs(y);
+  // Launch point sits a couple rs above the horizon.
+  float launch = u_rs * 1.8;
+  if (ay < launch) return vec3(0.0);
+
+  float along = ay - launch;                     // dist along axis from launch
+  if (along > 60.0 * u_rs) return vec3(0.0);     // truncate far field
+
+  // Cone opening: jet widens with along distance.
+  float coneR = launch * 0.18 + along * 0.13;
+  float radial = length(p.xz);
+  if (radial > coneR * 2.5) return vec3(0.0);
+
+  // Transverse profile: bright core + soft sheath.
+  float core   = exp(-(radial * radial) / (coneR * coneR * 0.25));
+  float sheath = exp(-(radial * radial) / (coneR * coneR * 1.4));
+
+  // Along-axis taper: peaks just outside launch, fades with distance.
+  float launchTaper = smoothstep(0.0, launch * 0.5, along);
+  float farFade     = 1.0 / (1.0 + along * 0.06);
+  float axial = launchTaper * farFade;
+
+  // Filamentary structure via FBM in cylindrical-ish coords.
+  // Spiral the noise along the axis so the jet looks helically structured.
+  float spiral = atan(p.z, p.x) + along * 0.55 + u_time * 0.6 * sign(y);
+  vec3 fp;
+  fp.x = cos(spiral) * radial * 1.4;
+  fp.y = sin(spiral) * radial * 1.4;
+  fp.z = along * 0.6 + u_time * 0.4 * sign(y);
+  float n = fbm(fp, 4);
+  float structure = mix(0.55, 1.25, n);
+
+  float dens = (core * 0.85 + sheath * 0.25) * axial * structure;
+
+  // Color: hot blue-white near launch -> pink/magenta with distance
+  // (synchrotron self-Compton fade). Mild outward tint for spread.
+  float t = clamp(along * 0.04, 0.0, 1.0);
+  vec3 hot   = vec3(0.70, 0.90, 1.30);
+  vec3 mid   = vec3(0.95, 0.85, 1.10);
+  vec3 cool  = vec3(1.10, 0.55, 0.85);
+  vec3 tint  = mix(mix(hot, mid, smoothstep(0.0, 0.4, t)),
+                   cool,
+                   smoothstep(0.4, 1.0, t));
+
+  // Boost for the bright inner core.
+  return tint * dens * 1.2;
+}
+
 struct Hit {
   bool horizon;
   vec3 diskCol;     // accumulated disk + star emission (front-to-back)
@@ -621,6 +679,23 @@ Hit traceRay(vec3 ro, vec3 rd) {
     //   }
     // }
 
+    // Relativistic jets: accumulate emission along the geodesic segment.
+    // Cheap volumetric integration at the segment midpoint, weighted by
+    // segment length. Lensing is automatic since we sample on the bent ray.
+    {
+      vec3 jMid = 0.5 * (prevPos + pNext);
+      vec3 segDir = pNext - prevPos;
+      float segLen = length(segDir);
+      vec3 jE = jetSample(jMid);
+      if (jE.r + jE.g + jE.b > 1e-4) {
+        h.diskCol += (1.0 - h.diskAlpha) * jE * segLen;
+        // Jets are mostly emissive (low absorption); only nudge alpha
+        // slightly so very dense regions still occlude background.
+        float jdens = max(max(jE.r, jE.g), jE.b);
+        h.diskAlpha += (1.0 - h.diskAlpha) * clamp(jdens * segLen * 0.05, 0.0, 0.5);
+      }
+    }
+
     if (rNext > 200.0 * u_rs) {
       h.escapeDir = normalize(pNext - prevPos);
       return h;
@@ -657,11 +732,7 @@ void main() {
   // Composite accumulated disk emission over the (possibly star-lit) bg.
   vec3 col = hit.diskCol + (1.0 - hit.diskAlpha) * bg;
 
-  // Filmic-ish tonemap (ACES approx) + gamma 2.2.
-  vec3 x = col;
-  vec3 mapped = (x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14);
-  col = clamp(mapped, 0.0, 1.0);
-  col = pow(col, vec3(1.0 / 2.2));
-
+  // Output linear HDR. Tonemap + gamma happen in the composite pass so
+  // the bloom pipeline can work in linear light.
   fragColor = vec4(col, 1.0);
 }
