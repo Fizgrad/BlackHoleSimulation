@@ -572,29 +572,27 @@ vec3 sampleStars(vec3 dir) {
 // Blackbody-ish temperature->color via piecewise tint table.
 
 vec3 blackbodyTint(float t) {
-  // Realistic black-body temperature ramp for an accretion disk.
-  // t = 0 deep cool, t = 1 hottest. Distribution gives a meaningful
-  // amount of disk to each colour band so the radial gradient reads
-  // strongly across the visible disk:
-  //   t < 0.10  : deep red ember (cool outer edge)
-  //   0.10-0.30 : orange-red (mid-outer)
-  //   0.30-0.50 : amber / gold (mid)
-  //   0.50-0.75 : yellow-white (mid-inner)
-  //   0.75-0.92 : white (inner)
-  //   > 0.92    : blue-white (very hot ISCO ring)
-  vec3 c0 = vec3(0.45, 0.08, 0.02);   // deep red ember
-  vec3 c1 = vec3(1.00, 0.30, 0.08);   // orange-red
-  vec3 c2 = vec3(1.00, 0.55, 0.18);   // amber
-  vec3 c3 = vec3(1.00, 0.82, 0.45);   // gold
-  vec3 c4 = vec3(1.00, 0.95, 0.80);   // warm white
-  vec3 c5 = vec3(0.95, 0.97, 1.05);   // pale white
-  vec3 c6 = vec3(0.65, 0.82, 1.20);   // hot blue-white
-  if (t < 0.10) return mix(c0, c1, t / 0.10);
-  if (t < 0.30) return mix(c1, c2, (t - 0.10) / 0.20);
-  if (t < 0.50) return mix(c2, c3, (t - 0.30) / 0.20);
-  if (t < 0.75) return mix(c3, c4, (t - 0.50) / 0.25);
-  if (t < 0.92) return mix(c4, c5, (t - 0.75) / 0.17);
-  return                 mix(c5, c6, (t - 0.92) / 0.08);
+  // Realistic black-body temperature ramp for an accretion disk, biased
+  // toward warm tones so the disk reads orange/gold across most of its
+  // radius. Only a thin innermost ring near ISCO reaches white-blue.
+  //   t < 0.15  : deep red ember (cool outer edge)
+  //   0.15-0.40 : orange-red (mid-outer)
+  //   0.40-0.65 : amber (mid)
+  //   0.65-0.85 : gold (mid-inner)
+  //   0.85-0.95 : warm white (inner)
+  //   > 0.95    : blue-white (very hot ISCO ring, narrow band)
+  vec3 c0 = vec3(0.40, 0.07, 0.02);   // deep red ember
+  vec3 c1 = vec3(0.95, 0.28, 0.07);   // orange-red
+  vec3 c2 = vec3(1.00, 0.50, 0.16);   // amber
+  vec3 c3 = vec3(1.00, 0.72, 0.32);   // gold
+  vec3 c4 = vec3(1.00, 0.88, 0.55);   // warm white
+  vec3 c5 = vec3(0.85, 0.92, 1.10);   // hot blue-white
+  if (t < 0.15) return mix(c0, c1, t / 0.15);
+  if (t < 0.40) return mix(c1, c2, (t - 0.15) / 0.25);
+  if (t < 0.65) return mix(c2, c3, (t - 0.40) / 0.25);
+  if (t < 0.85) return mix(c3, c4, (t - 0.65) / 0.20);
+  if (t < 0.95) return mix(c4, c5, (t - 0.85) / 0.10);
+  return c5;
 }
 
 // Single-point disk sample at an equatorial-plane crossing.
@@ -674,14 +672,14 @@ vec4 sampleDisk(vec3 p, vec3 viewDir) {
 
   // Photon ring: bright thin band at r ~ 1.5 rs.
   float pring = exp(-pow((r - 1.5 * u_rs) / (u_rs * 0.18), 2.0));
-  vec3 pringEmit = vec3(1.05, 0.95, 0.78) * pring * 3.5;
+  vec3 pringEmit = vec3(1.05, 0.85, 0.55) * pring * 2.0;
 
   // ISCO plunging wisps: extra reddish glow inside rIn down to ~rs.
   float plunge = smoothstep(rIn, rIn - 1.2, r) *
                  smoothstep(u_rs * 1.05, u_rs * 1.5, r);
-  vec3 plungeEmit = vec3(1.0, 0.45, 0.18) * plunge * fil * 1.0;
+  vec3 plungeEmit = vec3(1.0, 0.45, 0.18) * plunge * fil * 0.8;
 
-  vec3 col = tint * shift * bright * beam * 3.5 + pringEmit + plungeEmit;
+  vec3 col = tint * shift * bright * beam * 2.2 + pringEmit + plungeEmit;
   alpha = clamp(alpha + pring * 0.6, 0.0, 1.0);
 
   return vec4(col, alpha);
