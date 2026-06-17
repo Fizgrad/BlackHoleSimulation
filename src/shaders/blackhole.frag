@@ -107,15 +107,18 @@ float ridged(vec3 p, int octaves) {
 // --- starfield ----------------------------------------------------------
 
 vec3 starColor(float t) {
+  // Realistic stellar population: M+K dwarfs dominate (~85%), G/F yellow
+  // ~10%, A white ~3%, B/O blue rare ~2%. Map t through a curve so most
+  // stars come out warm.
   vec3 blue   = vec3(0.55, 0.70, 1.00);
   vec3 white  = vec3(0.95, 0.97, 1.00);
   vec3 yellow = vec3(1.00, 0.95, 0.80);
   vec3 orange = vec3(1.00, 0.78, 0.55);
   vec3 red    = vec3(1.00, 0.55, 0.40);
-  if (t < 0.25) return mix(blue,   white,  t / 0.25);
-  if (t < 0.55) return mix(white,  yellow, (t - 0.25) / 0.30);
-  if (t < 0.80) return mix(yellow, orange, (t - 0.55) / 0.25);
-  return                 mix(orange, red,   (t - 0.80) / 0.20);
+  if (t < 0.05) return mix(blue,   white,  t / 0.05);
+  if (t < 0.15) return mix(white,  yellow, (t - 0.05) / 0.10);
+  if (t < 0.45) return mix(yellow, orange, (t - 0.15) / 0.30);
+  return                 mix(orange, red,   (t - 0.45) / 0.55);
 }
 
 // One angular grid layer of stars. Uses (theta, phi) so size stays uniform.
@@ -153,28 +156,101 @@ vec3 starLayer(vec3 dir, float density, float scale, float seed) {
   return col;
 }
 
-// Tilted Milky-Way-like band with brighter core + dark dust filaments.
+// Milky-Way-like band, far more detailed than a single Gaussian:
+//   - Tilted central plane with a prominent bulge (galactic centre) that
+//     dominates one side of the sky.
+//   - Two parallel sub-bands offset above/below the midplane, modelling
+//     the two nearest spiral arms seen edge-on.
+//   - Pink H-II emission regions (procedural dots) studded along the band.
+//   - Pronounced "Great Rift"-style dark dust lanes carved by ridged
+//     noise + a primary dark notch through the centre.
+//   - Bulge has its own ridged dust silhouette (Coalsack-like).
 vec3 galaxyBand(vec3 dir) {
   vec3 bandN = normalize(vec3(0.30, 0.86, 0.40));
   float lat = dot(dir, bandN);
-  float band = exp(-lat * lat * 28.0);
+  vec3 along3 = normalize(dir - bandN * lat);
 
-  vec3 along = normalize(dir - bandN * lat);
-  float n0   = fbm(along * 3.5, 5);
-  float n1   = fbm(along * 7.0 + 33.1, 4);
-  float dust = ridged(along * 6.0 + 11.3, 5);
+  // Three lobes: midplane band + two sub-bands offset above/below.
+  // Each is a Gaussian in latitude.
+  float band  = exp(-lat * lat * 22.0);
+  float armA  = exp(-(lat - 0.22) * (lat - 0.22) * 70.0);
+  float armB  = exp(-(lat + 0.20) * (lat + 0.20) * 70.0);
 
+  // Multi-scale brightness texture along the band.
+  float n0   = fbm(along3 * 3.5, 5);
+  float n1   = fbm(along3 * 7.0 + 33.1, 4);
+  float n2   = fbm(along3 * 14.0 - 7.7, 4);
+
+  // Galactic centre direction (bulge): brighter, warmer, broader vertically.
   vec3 corePt = normalize(vec3(0.70, 0.15, -0.60));
-  float coreF = pow(max(0.0, dot(dir, corePt)), 6.0);
+  float coreF  = pow(max(0.0, dot(dir, corePt)), 6.0);
+  float bulge  = pow(max(0.0, dot(dir, corePt)), 12.0);
 
-  vec3 cool = vec3(0.08, 0.10, 0.18);
-  vec3 warm = vec3(0.26, 0.18, 0.12);
-  vec3 core = vec3(0.42, 0.28, 0.15);
-  vec3 base = mix(mix(cool, warm, n0), core, coreF);
+  // Bulge widens the central region vertically.
+  float bulgeBoost = exp(-lat * lat * 8.0) * coreF * 1.4;
 
-  float bright = band * (0.25 + 0.85 * n0 + 0.15 * n1) * (0.30 + 1.8 * coreF);
-  bright *= mix(0.18, 1.0, smoothstep(0.55, 0.90, dust));
-  return base * bright;
+  // Dust lanes: ridged noise carves dark filaments. Two scales for fine
+  // and coarse detail. Plus a strong central rift (great rift) right on
+  // the midplane near the bulge.
+  float dustFine   = ridged(along3 * 7.5  + 11.3, 5);
+  float dustCoarse = ridged(along3 * 2.4  - 4.1,  4);
+  // Great Rift: dark notch right on midplane in a region of phi.
+  float greatRift = exp(-lat * lat * 250.0) * smoothstep(0.0, 0.4, coreF);
+
+  // Composite extinction mask: 1 = clear, 0 = totally obscured.
+  float extLane = mix(0.20, 1.0, smoothstep(0.55, 0.90, dustFine));
+  extLane     *= mix(0.45, 1.0, smoothstep(0.40, 0.85, dustCoarse));
+  extLane     *= 1.0 - greatRift * 0.85;
+
+  // Stellar background colour gradient: cool blue-grey out in the disk,
+  // warmer toward bulge.
+  vec3 cool = vec3(0.07, 0.09, 0.16);
+  vec3 warm = vec3(0.24, 0.16, 0.10);
+  vec3 core = vec3(0.45, 0.30, 0.18);
+  vec3 base = mix(mix(cool, warm, smoothstep(0.0, 0.5, n0)), core, coreF);
+
+  // Brightness: midband + sub-arms + texture + bulge boost.
+  float brightness =
+      (band * 0.6 + armA * 0.25 + armB * 0.25 + bulgeBoost) *
+      (0.30 + 0.85 * n0 + 0.20 * n1 + 0.10 * n2);
+  brightness *= extLane;
+
+  vec3 col = base * brightness;
+
+  // H-II regions: procedural pink emission dots along the band.
+  // Sample a high-frequency 2D angular grid and place red-pink blobs in
+  // cells with high random + high band proximity. Soft and rare.
+  {
+    float theta = acos(clamp(dir.y, -1.0, 1.0));
+    float phi   = atan(dir.z, dir.x);
+    vec2 ang = vec2(phi, theta) * 95.0;
+    vec2 ic  = floor(ang);
+    vec2 fc  = fract(ang);
+    for (int yo = -1; yo <= 1; yo++) {
+      for (int xo = -1; xo <= 1; xo++) {
+        vec2 cell = ic + vec2(float(xo), float(yo));
+        float h1  = hash21(cell + 121.7);
+        if (h1 < 0.985) continue;                   // very rare
+        float h2  = hash21(cell + 47.3);
+        float h3  = hash21(cell + 91.1);
+        vec2  sp  = vec2(float(xo), float(yo)) + vec2(h2, h3);
+        vec2  d   = fc - sp;
+        float r2  = dot(d, d);
+        // Stay close to the band only.
+        float bandWeight = exp(-lat * lat * 35.0);
+        // Rare bigger HII gets a wide soft halo
+        float wide = exp(-r2 * 80.0);
+        float hot  = exp(-r2 * 600.0);
+        // Pink/magenta H-alpha tint, slight blue OIII for variety.
+        vec3 tintHII = mix(vec3(1.20, 0.35, 0.65),
+                           vec3(0.55, 0.85, 1.00),
+                           h3 * 0.35);
+        col += tintHII * (wide * 0.18 + hot * 0.55) * bandWeight * extLane;
+      }
+    }
+  }
+
+  return col;
 }
 
 // A single nebula/patch at a given sky position. Soft radial falloff
@@ -355,24 +431,76 @@ vec3 nebulae(vec3 dir) {
   return col;
 }
 
-// Faint interstellar dust extinction: damps stars in dense regions.
-float dustExtinction(vec3 dir) {
-  float d = ridged(dir * 2.4 - 5.1, 4);
+// Interstellar dust extinction WITH reddening: blue absorbed more than
+// red. Returns a per-channel transmittance (1 = clear, ~0 = obscured).
+// Real ISM extinction follows roughly A(lambda) ~ 1/lambda, so blue
+// channel attenuates faster.
+vec3 dustExtinction(vec3 dir) {
+  float d  = ridged(dir * 2.4 - 5.1, 4);
   float d2 = fbm(dir * 1.2 + 19.3, 4);
-  return mix(1.0, 0.40, smoothstep(0.50, 0.88, d + d2 * 0.3));
+  float depth = smoothstep(0.50, 0.88, d + d2 * 0.3);
+  // depth in [0,1]: 0 = no dust, 1 = thick lane.
+  // Per-channel: red barely affected, green moderate, blue heavy.
+  return vec3(
+    mix(1.0, 0.65, depth),
+    mix(1.0, 0.45, depth),
+    mix(1.0, 0.25, depth)
+  );
+}
+
+// Globular clusters: tiny soft fuzzy bright dots scattered along the
+// galactic band. Always warm yellow-white (old stellar populations).
+vec3 globularClusters(vec3 dir) {
+  vec3 bandN = normalize(vec3(0.30, 0.86, 0.40));
+  float lat = dot(dir, bandN);
+  // Cluster around the band but allow some halo distribution.
+  float bandWeight = exp(-lat * lat * 5.0);
+  if (bandWeight < 0.05) return vec3(0.0);
+
+  float theta = acos(clamp(dir.y, -1.0, 1.0));
+  float phi   = atan(dir.z, dir.x);
+  vec2 ang = vec2(phi, theta) * 18.0;
+  vec2 ic  = floor(ang);
+  vec2 fc  = fract(ang);
+
+  vec3 col = vec3(0.0);
+  for (int yo = -1; yo <= 1; yo++) {
+    for (int xo = -1; xo <= 1; xo++) {
+      vec2 cell = ic + vec2(float(xo), float(yo));
+      float h1 = hash21(cell + 5.5);
+      if (h1 < 0.992) continue;                    // very rare
+      float h2 = hash21(cell + 13.7);
+      float h3 = hash21(cell + 91.1);
+      vec2 sp  = vec2(float(xo), float(yo)) + vec2(h2, h3);
+      vec2 d   = fc - sp;
+      float r2 = dot(d, d);
+      // Two-tier glow: tight bright core + diffuse halo.
+      float core = exp(-r2 * 9000.0);
+      float halo = exp(-r2 * 800.0);
+      vec3 tint = mix(vec3(1.00, 0.95, 0.78),
+                      vec3(1.00, 0.82, 0.55),
+                      h3);
+      col += tint * (core * 1.4 + halo * 0.18) * bandWeight;
+    }
+  }
+  return col;
 }
 
 vec3 sampleStars(vec3 dir) {
-  // Three star layers at increasing angular density.
+  // Four star layers at increasing angular density. The denser layers
+  // produce the "milky" speckle that gives the sky depth without obvious
+  // tiling.
   vec3 stars = vec3(0.0);
-  stars += starLayer(dir, 0.06, 120.0,  1.0) * 1.4;
-  stars += starLayer(dir, 0.18, 320.0,  9.7) * 0.8;
-  stars += starLayer(dir, 0.45, 800.0, 17.3) * 0.35;
+  stars += starLayer(dir, 0.06,  120.0,  1.0) * 1.4;
+  stars += starLayer(dir, 0.18,  320.0,  9.7) * 0.8;
+  stars += starLayer(dir, 0.45,  800.0, 17.3) * 0.35;
+  stars += starLayer(dir, 0.85, 1800.0, 31.1) * 0.12;
 
-  float ext = dustExtinction(dir);
+  // Selective extinction: dust reddens stars instead of just dimming.
+  vec3 ext = dustExtinction(dir);
   stars *= ext;
 
-  vec3 sky = galaxyBand(dir) + nebulae(dir);
+  vec3 sky = galaxyBand(dir) + nebulae(dir) + globularClusters(dir);
   return stars + sky;
 }
 
