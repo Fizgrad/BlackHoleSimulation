@@ -674,14 +674,14 @@ vec4 sampleDisk(vec3 p, vec3 viewDir) {
 
   // Photon ring: bright thin band at r ~ 1.5 rs.
   float pring = exp(-pow((r - 1.5 * u_rs) / (u_rs * 0.18), 2.0));
-  vec3 pringEmit = vec3(1.05, 0.95, 0.78) * pring * 6.0;
+  vec3 pringEmit = vec3(1.05, 0.95, 0.78) * pring * 3.5;
 
   // ISCO plunging wisps: extra reddish glow inside rIn down to ~rs.
   float plunge = smoothstep(rIn, rIn - 1.2, r) *
                  smoothstep(u_rs * 1.05, u_rs * 1.5, r);
-  vec3 plungeEmit = vec3(1.0, 0.45, 0.18) * plunge * fil * 1.8;
+  vec3 plungeEmit = vec3(1.0, 0.45, 0.18) * plunge * fil * 1.0;
 
-  vec3 col = tint * shift * bright * beam * 6.0 + pringEmit + plungeEmit;
+  vec3 col = tint * shift * bright * beam * 3.5 + pringEmit + plungeEmit;
   alpha = clamp(alpha + pring * 0.6, 0.0, 1.0);
 
   return vec4(col, alpha);
