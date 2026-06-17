@@ -867,7 +867,14 @@ Hit traceRay(vec3 ro, vec3 rd) {
   float u  = 1.0 / r0;
   float du = -rdRad / (r0 * rdTan + sign(rdTan) * 1e-20 + (rdTan == 0.0 ? 1e-20 : 0.0));
 
-  float dPhi = u_dPhi * (rdTan >= 0.0 ? 1.0 : -1.0);
+  // Per-ray jitter on dPhi. Without this, adjacent pixels step in
+  // lockstep, and the discrete crossings between geodesic samples and
+  // the equatorial plane land at quantised radii — producing very
+  // visible "tree-ring" banding across the disk and its lensed images.
+  // ±10% multiplicative jitter is enough to dither the crossings into
+  // smooth turbulence.
+  float jitter = hash31(rd * 117.3 + ro * 0.07) - 0.5;
+  float dPhi = u_dPhi * (rdTan >= 0.0 ? 1.0 : -1.0) * (1.0 + 0.18 * jitter);
 
   float phi = 0.0;
   vec3 prevPos = ro;
