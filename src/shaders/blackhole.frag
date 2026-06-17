@@ -536,17 +536,29 @@ vec3 sampleStars(vec3 dir) {
 // Blackbody-ish temperature->color via piecewise tint table.
 
 vec3 blackbodyTint(float t) {
-  // Interstellar Gargantua-style palette: deep amber -> orange -> gold ->
-  // white-blue at the hottest tip. Most of the disk reads warm orange.
-  vec3 c0 = vec3(0.55, 0.10, 0.02);   // dim outer ember
-  vec3 c1 = vec3(1.00, 0.32, 0.06);   // orange
-  vec3 c2 = vec3(1.00, 0.62, 0.18);   // amber gold
-  vec3 c3 = vec3(1.00, 0.88, 0.55);   // hot pale gold
-  vec3 c4 = vec3(0.80, 0.92, 1.10);   // ISCO-edge blue-white
-  if (t < 0.25) return mix(c0, c1, t / 0.25);
-  if (t < 0.55) return mix(c1, c2, (t - 0.25) / 0.30);
-  if (t < 0.88) return mix(c2, c3, (t - 0.55) / 0.33);
-  return                 mix(c3, c4, (t - 0.88) / 0.12);
+  // Realistic black-body temperature ramp for an accretion disk.
+  // t = 0 deep cool, t = 1 hottest. Distribution gives a meaningful
+  // amount of disk to each colour band so the radial gradient reads
+  // strongly across the visible disk:
+  //   t < 0.10  : deep red ember (cool outer edge)
+  //   0.10-0.30 : orange-red (mid-outer)
+  //   0.30-0.50 : amber / gold (mid)
+  //   0.50-0.75 : yellow-white (mid-inner)
+  //   0.75-0.92 : white (inner)
+  //   > 0.92    : blue-white (very hot ISCO ring)
+  vec3 c0 = vec3(0.45, 0.08, 0.02);   // deep red ember
+  vec3 c1 = vec3(1.00, 0.30, 0.08);   // orange-red
+  vec3 c2 = vec3(1.00, 0.55, 0.18);   // amber
+  vec3 c3 = vec3(1.00, 0.82, 0.45);   // gold
+  vec3 c4 = vec3(1.00, 0.95, 0.80);   // warm white
+  vec3 c5 = vec3(0.95, 0.97, 1.05);   // pale white
+  vec3 c6 = vec3(0.65, 0.82, 1.20);   // hot blue-white
+  if (t < 0.10) return mix(c0, c1, t / 0.10);
+  if (t < 0.30) return mix(c1, c2, (t - 0.10) / 0.20);
+  if (t < 0.50) return mix(c2, c3, (t - 0.30) / 0.20);
+  if (t < 0.75) return mix(c3, c4, (t - 0.50) / 0.25);
+  if (t < 0.92) return mix(c4, c5, (t - 0.75) / 0.17);
+  return                 mix(c5, c6, (t - 0.92) / 0.08);
 }
 
 // Single-point disk sample at an equatorial-plane crossing.
@@ -591,11 +603,25 @@ vec4 sampleDisk(vec3 p, vec3 viewDir) {
   // the background star field through.
   float alpha = coverage * mix(0.10, 1.0, turb) * mix(0.30, 1.0, fil);
 
-  // Temperature -> color. Hot near ISCO, cool outside, +grav redshift.
-  float tNorm = clamp((r - u_diskInner) / max(u_diskOuter - u_diskInner, 1e-4), 0.0, 1.0);
-  float temp = pow(1.0 - tNorm, 1.5);
+  // Temperature profile: Shakura-Sunyaev steady-state thin disk
+  //   T(r) ∝ r^(-3/4) * (1 - sqrt(r_in / r))^(1/4)
+  // Inner edge boundary condition kills the temperature exactly at
+  // r_in (zero stress at the ISCO), peaks ~1.36*r_in, then falls off.
+  // We normalise so the peak maps to t=1.0 and use that for colour.
+  float rRel = r / max(u_diskInner, 1e-3);
+  float boundary = max(1.0 - sqrt(1.0 / max(rRel, 1.001)), 0.0);
+  float tempProfile = pow(rRel, -0.75) * pow(boundary, 0.25);
+  // Calibrated peak: profile maxes near rRel ~= 1.36, value ~= 0.41.
+  // Multiply by 1/peak so peak hits ~1.0.
+  float temp = clamp(tempProfile * 2.45, 0.0, 1.0);
+
+  // Gravitational redshift: photons climbing out of the well lose
+  // energy, so the inner edge of the disk dims and reddens slightly.
+  // Use sqrt(1 - rs/r) (Schwarzschild factor for static observer at
+  // infinity). Gentle: still keep the inner ring hot, just slightly
+  // pulled down.
   float gr = sqrt(max(1.0 - u_rs / max(r, u_rs * 1.001), 0.0));
-  temp *= mix(0.55, 1.0, gr);
+  temp *= mix(0.65, 1.0, gr);
   vec3 tint = blackbodyTint(temp);
 
   // Strong relativistic Doppler beaming.
