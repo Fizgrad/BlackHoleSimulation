@@ -121,8 +121,12 @@ vec3 starColor(float t) {
   return                 mix(orange, red,   (t - 0.45) / 0.55);
 }
 
-// One angular grid layer of stars. Uses (theta, phi) so size stays uniform.
-vec3 starLayer(vec3 dir, float density, float scale, float seed) {
+// One angular grid layer of stars with realistic magnitude distribution.
+// densityMul (vec3) modulates per-direction density (e.g. extra density
+// along the galactic plane). Magnitude distribution heavily weighted
+// toward dim stars with a long bright tail (real luminosity function).
+vec3 starLayer(vec3 dir, float density, float scale, float seed,
+               float plane) {
   float theta = acos(clamp(dir.y, -1.0, 1.0));
   float phi   = atan(dir.z, dir.x);
   vec2 ang = vec2(phi, theta) * scale;
@@ -134,23 +138,49 @@ vec3 starLayer(vec3 dir, float density, float scale, float seed) {
     for (int xo = -1; xo <= 1; xo++) {
       vec2 cell = ic + vec2(float(xo), float(yo));
       float h1 = hash21(cell + seed);
-      if (h1 < 1.0 - density) continue;
+      // Density boosted along galactic plane (up to ~3x).
+      float effDensity = density * (1.0 + plane * 2.5);
+      if (h1 < 1.0 - effDensity) continue;
       float h2 = hash21(cell + seed + 7.13);
       float h3 = hash21(cell + seed + 13.7);
       float h4 = hash21(cell + seed + 91.1);
       vec2 sp = vec2(float(xo), float(yo)) + vec2(h2, h3);
       vec2 d = fc - sp;
       float r2 = dot(d, d);
-      float mag = pow(h4, 6.0);
-      float core = exp(-r2 * 220.0) * (0.6 + mag * 4.0);
+
+      // Magnitude distribution: most stars dim, rare very bright tail.
+      // pow(h, 14) heavily concentrates 0..1; +base for visible floor.
+      // Combined with linear+strong tail = wide dynamic range like the
+      // real sky.
+      float magRaw = pow(h4, 14.0);
+      float intensity = 0.10 + magRaw * 30.0;     // up to ~30x median
+
+      // Bright stars get larger PSF (saturation + scattering bloom).
+      float kernelW = mix(220.0, 60.0, smoothstep(0.0, 1.0, magRaw));
+      float core = exp(-r2 * kernelW) * intensity;
+
+      // Soft glow halo for bright stars only.
+      float halo = 0.0;
+      if (magRaw > 0.5) {
+        halo = exp(-r2 * 35.0) * (magRaw - 0.5) * 1.6;
+      }
+
+      // 4-point diffraction spikes only for the very bright ones.
       float spike = 0.0;
-      if (mag > 0.55) {
+      if (magRaw > 0.75) {
         float sx = exp(-d.x * d.x * 9000.0) * exp(-abs(d.y) * 55.0);
         float sy = exp(-d.y * d.y * 9000.0) * exp(-abs(d.x) * 55.0);
-        spike = (sx + sy) * (mag - 0.55) * 3.0;
+        spike = (sx + sy) * (magRaw - 0.75) * 5.0;
       }
-      vec3 tint = starColor(hash21(cell + seed + 31.7));
-      col += tint * (core + spike);
+
+      // Star colour: blue stars are intrinsically brighter, so brighter
+      // stars are biased blueward; faint stars are mostly M-dwarf red.
+      // Combine the per-cell colour-class hash with a brightness shift.
+      float colourClass = hash21(cell + seed + 31.7);
+      colourClass = mix(colourClass, 0.05, magRaw * 0.6);
+      vec3 tint = starColor(colourClass);
+
+      col += tint * (core + halo + spike);
     }
   }
   return col;
@@ -507,14 +537,20 @@ vec3 globularClusters(vec3 dir) {
 }
 
 vec3 sampleStars(vec3 dir) {
+  // Galactic-plane proximity in [0, 1]: 1 on midplane, fades off-plane.
+  // Used to multiply star density so the band looks naturally crowded.
+  vec3 bandN = normalize(vec3(0.30, 0.86, 0.40));
+  float lat = dot(dir, bandN);
+  float plane = exp(-lat * lat * 9.0);
+
   // Four star layers at increasing angular density. The denser layers
   // produce the "milky" speckle that gives the sky depth without obvious
   // tiling.
   vec3 stars = vec3(0.0);
-  stars += starLayer(dir, 0.06,  120.0,  1.0) * 1.4;
-  stars += starLayer(dir, 0.18,  320.0,  9.7) * 0.8;
-  stars += starLayer(dir, 0.45,  800.0, 17.3) * 0.35;
-  stars += starLayer(dir, 0.85, 1800.0, 31.1) * 0.12;
+  stars += starLayer(dir, 0.06,  120.0,  1.0, plane) * 1.4;
+  stars += starLayer(dir, 0.18,  320.0,  9.7, plane) * 0.8;
+  stars += starLayer(dir, 0.45,  800.0, 17.3, plane) * 0.35;
+  stars += starLayer(dir, 0.85, 1800.0, 31.1, plane) * 0.12;
 
   // Selective extinction: dust reddens stars instead of just dimming.
   vec3 ext = dustExtinction(dir);
