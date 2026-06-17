@@ -13,7 +13,7 @@ uniform sampler2D u_src;
 uniform vec2 u_srcTexel;   // 1/srcSize in uv units
 uniform float u_threshold; // optional bright-pass threshold (>=0 disables)
 
-vec3 sample(vec2 uv) {
+vec3 tap(vec2 uv) {
   return texture(u_src, uv).rgb;
 }
 
@@ -32,20 +32,20 @@ void main() {
   vec2 uv = v_ndc * 0.5 + 0.5;
   vec2 px = u_srcTexel;
 
-  vec3 a = sample(uv + px * vec2(-1.0, -1.0));
-  vec3 b = sample(uv + px * vec2( 0.0, -1.0));
-  vec3 c = sample(uv + px * vec2( 1.0, -1.0));
-  vec3 d = sample(uv + px * vec2(-1.0,  0.0));
-  vec3 e = sample(uv + px * vec2( 0.0,  0.0));
-  vec3 f = sample(uv + px * vec2( 1.0,  0.0));
-  vec3 g = sample(uv + px * vec2(-1.0,  1.0));
-  vec3 h = sample(uv + px * vec2( 0.0,  1.0));
-  vec3 i = sample(uv + px * vec2( 1.0,  1.0));
+  vec3 a = tap(uv + px * vec2(-1.0, -1.0));
+  vec3 b = tap(uv + px * vec2( 0.0, -1.0));
+  vec3 c = tap(uv + px * vec2( 1.0, -1.0));
+  vec3 d = tap(uv + px * vec2(-1.0,  0.0));
+  vec3 e = tap(uv + px * vec2( 0.0,  0.0));
+  vec3 f = tap(uv + px * vec2( 1.0,  0.0));
+  vec3 g = tap(uv + px * vec2(-1.0,  1.0));
+  vec3 h = tap(uv + px * vec2( 0.0,  1.0));
+  vec3 i = tap(uv + px * vec2( 1.0,  1.0));
 
-  vec3 j = sample(uv + px * vec2(-0.5, -0.5));
-  vec3 k = sample(uv + px * vec2( 0.5, -0.5));
-  vec3 l = sample(uv + px * vec2(-0.5,  0.5));
-  vec3 m = sample(uv + px * vec2( 0.5,  0.5));
+  vec3 j = tap(uv + px * vec2(-0.5, -0.5));
+  vec3 k = tap(uv + px * vec2( 0.5, -0.5));
+  vec3 l = tap(uv + px * vec2(-0.5,  0.5));
+  vec3 m = tap(uv + px * vec2( 0.5,  0.5));
 
   // Weighted sum (5 boxes). Centre and inner taps get more weight to
   // preserve energy through the chain.
