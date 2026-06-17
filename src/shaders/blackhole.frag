@@ -157,50 +157,75 @@ vec3 starLayer(vec3 dir, float density, float scale, float seed) {
 }
 
 // Milky-Way-like band, far more detailed than a single Gaussian:
-//   - Tilted central plane with a prominent bulge (galactic centre) that
-//     dominates one side of the sky.
-//   - Two parallel sub-bands offset above/below the midplane, modelling
-//     the two nearest spiral arms seen edge-on.
+//   - Tilted plane with noise-warped midline (the band itself wobbles
+//     instead of being a perfect great circle).
+//   - Variable thickness along its length: the band thickens near the
+//     bulge and thins out in the anticentre, with organic large-scale
+//     bulges and gaps.
+//   - Asymmetric bulge: the galactic centre is not a perfect Gaussian,
+//     it's perturbed and slightly squashed.
+//   - Dust lane runs along a SEPARATE noise-warped curve offset from the
+//     geometric midline (matches real Milky Way appearance from Earth).
+//   - Coarse "star cloud" hotspots (Sagittarius/Cygnus-style bright knots).
 //   - Pink H-II emission regions (procedural dots) studded along the band.
-//   - Pronounced "Great Rift"-style dark dust lanes carved by ridged
-//     noise + a primary dark notch through the centre.
-//   - Bulge has its own ridged dust silhouette (Coalsack-like).
+//   - Multi-scale ridged dust filaments.
 vec3 galaxyBand(vec3 dir) {
   vec3 bandN = normalize(vec3(0.30, 0.86, 0.40));
-  float lat = dot(dir, bandN);
-  vec3 along3 = normalize(dir - bandN * lat);
+  float latRaw = dot(dir, bandN);
+  vec3 along3  = normalize(dir - bandN * latRaw);
 
-  // Three lobes: midplane band + two sub-bands offset above/below.
-  // Each is a Gaussian in latitude.
-  float band  = exp(-lat * lat * 22.0);
-  float armA  = exp(-(lat - 0.22) * (lat - 0.22) * 70.0);
-  float armB  = exp(-(lat + 0.20) * (lat + 0.20) * 70.0);
+  // Warp the band's centerline with low-frequency noise along it. This
+  // is the single biggest "anti-perfect" change.
+  float warp1 = fbm(along3 * 1.2 + 5.5, 4) * 2.0 - 1.0;
+  float warp2 = fbm(along3 * 2.6 + 17.1, 4) * 2.0 - 1.0;
+  float lat   = latRaw - (warp1 * 0.045 + warp2 * 0.020);
+
+  // Variable band thickness along its length: thicker near the bulge,
+  // thinner in the anticentre, with gaps and bulges driven by noise.
+  float thickN = fbm(along3 * 1.8 + 11.0, 4);
+  float thick  = mix(0.55, 1.7, thickN);  // 0.55x..1.7x
+
+  // Main band: only one Gaussian envelope now (no rigid parallel arms).
+  // The thickness modulation does the irregular widening.
+  float band = exp(-(lat * lat) / (thick * thick) * 22.0);
 
   // Multi-scale brightness texture along the band.
-  float n0   = fbm(along3 * 3.5, 5);
-  float n1   = fbm(along3 * 7.0 + 33.1, 4);
-  float n2   = fbm(along3 * 14.0 - 7.7, 4);
+  float n0   = fbm(along3 * 3.5,  5);
+  float n1   = fbm(along3 * 7.0  + 33.1, 4);
+  float n2   = fbm(along3 * 14.0 - 7.7,  4);
 
-  // Galactic centre direction (bulge): brighter, warmer, broader vertically.
+  // Galactic centre direction (bulge): brighter, broader, asymmetric.
   vec3 corePt = normalize(vec3(0.70, 0.15, -0.60));
-  float coreF  = pow(max(0.0, dot(dir, corePt)), 6.0);
-  float bulge  = pow(max(0.0, dot(dir, corePt)), 12.0);
+  float coreCos = max(0.0, dot(dir, corePt));
+  // Asymmetric bulge: distort the radial coord with noise so it's not
+  // a perfect circle around corePt.
+  float bulgePerturb = fbm(dir * 4.0 + 99.7, 4) * 0.6 + 0.7;
+  float coreF  = pow(coreCos, 6.0) * bulgePerturb;
+  float bulgeBoost = exp(-lat * lat * 6.5) * coreF * 1.35;
 
-  // Bulge widens the central region vertically.
-  float bulgeBoost = exp(-lat * lat * 8.0) * coreF * 1.4;
+  // Star clouds: bright noisy hotspots scattered along the band, plus
+  // a couple of stronger knots concentrated near the bulge (mimics
+  // Sgr/Cyg/Sct star clouds).
+  float cloudN = pow(fbm(along3 * 5.5 + 4.4, 4), 3.0);
+  float starClouds = cloudN * exp(-lat * lat * 30.0) * (0.4 + 1.6 * coreF);
 
-  // Dust lanes: ridged noise carves dark filaments. Two scales for fine
-  // and coarse detail. Plus a strong central rift (great rift) right on
-  // the midplane near the bulge.
+  // Dust lanes: ridged noise carves dark filaments. The dust lane
+  // doesn't run perfectly along midplane — it follows its own warped
+  // curve offset slightly below the geometric centre (Milky Way as seen
+  // from Earth has the dust lane below the band's apparent midline).
+  float dustWarp = fbm(along3 * 1.5 + 22.0, 4) * 2.0 - 1.0;
+  float dustLat  = lat + 0.025 + dustWarp * 0.04;
   float dustFine   = ridged(along3 * 7.5  + 11.3, 5);
   float dustCoarse = ridged(along3 * 2.4  - 4.1,  4);
-  // Great Rift: dark notch right on midplane in a region of phi.
-  float greatRift = exp(-lat * lat * 250.0) * smoothstep(0.0, 0.4, coreF);
+  // Concentrated dust along the warped lane.
+  float duskMask = exp(-dustLat * dustLat * 200.0);
+  float greatRift = duskMask * smoothstep(-0.2, 0.5, coreF);
 
-  // Composite extinction mask: 1 = clear, 0 = totally obscured.
-  float extLane = mix(0.20, 1.0, smoothstep(0.55, 0.90, dustFine));
-  extLane     *= mix(0.45, 1.0, smoothstep(0.40, 0.85, dustCoarse));
+  float extLane = mix(0.18, 1.0, smoothstep(0.55, 0.90, dustFine));
+  extLane     *= mix(0.42, 1.0, smoothstep(0.40, 0.85, dustCoarse));
   extLane     *= 1.0 - greatRift * 0.85;
+  // Add narrow ribbon of stronger extinction following the warped lane.
+  extLane     *= mix(0.55, 1.0, 1.0 - duskMask * 0.7);
 
   // Stellar background colour gradient: cool blue-grey out in the disk,
   // warmer toward bulge.
@@ -209,17 +234,15 @@ vec3 galaxyBand(vec3 dir) {
   vec3 core = vec3(0.45, 0.30, 0.18);
   vec3 base = mix(mix(cool, warm, smoothstep(0.0, 0.5, n0)), core, coreF);
 
-  // Brightness: midband + sub-arms + texture + bulge boost.
+  // Composite brightness.
   float brightness =
-      (band * 0.6 + armA * 0.25 + armB * 0.25 + bulgeBoost) *
+      (band * (0.55 + 0.55 * thickN) + bulgeBoost + starClouds * 0.9) *
       (0.30 + 0.85 * n0 + 0.20 * n1 + 0.10 * n2);
   brightness *= extLane;
 
   vec3 col = base * brightness;
 
   // H-II regions: procedural pink emission dots along the band.
-  // Sample a high-frequency 2D angular grid and place red-pink blobs in
-  // cells with high random + high band proximity. Soft and rare.
   {
     float theta = acos(clamp(dir.y, -1.0, 1.0));
     float phi   = atan(dir.z, dir.x);
@@ -230,18 +253,15 @@ vec3 galaxyBand(vec3 dir) {
       for (int xo = -1; xo <= 1; xo++) {
         vec2 cell = ic + vec2(float(xo), float(yo));
         float h1  = hash21(cell + 121.7);
-        if (h1 < 0.985) continue;                   // very rare
+        if (h1 < 0.985) continue;
         float h2  = hash21(cell + 47.3);
         float h3  = hash21(cell + 91.1);
         vec2  sp  = vec2(float(xo), float(yo)) + vec2(h2, h3);
         vec2  d   = fc - sp;
         float r2  = dot(d, d);
-        // Stay close to the band only.
         float bandWeight = exp(-lat * lat * 35.0);
-        // Rare bigger HII gets a wide soft halo
         float wide = exp(-r2 * 80.0);
         float hot  = exp(-r2 * 600.0);
-        // Pink/magenta H-alpha tint, slight blue OIII for variety.
         vec3 tintHII = mix(vec3(1.20, 0.35, 0.65),
                            vec3(0.55, 0.85, 1.00),
                            h3 * 0.35);
