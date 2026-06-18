@@ -580,23 +580,23 @@ vec3 sampleStars(vec3 dir) {
 // Blackbody-ish temperature->color via piecewise tint table.
 
 vec3 blackbodyTint(float t) {
-  // Low-saturation, white-dominated palette for a more "scientific
-  // visualisation" look instead of an art-piece amber filter:
-  //   t = 0.0  : warm sand / khaki (very low sat)
-  //   t = 0.5  : warm white
-  //   t = 0.85 : neutral white
-  //   t = 1.0  : faintly blue-white (slightly cool)
-  // Continuous mix via a smoothed parameter; no hard segment seams.
-  vec3 c0 = vec3(0.85, 0.66, 0.42);   // warm sand (cool outer edge)
-  vec3 c1 = vec3(1.00, 0.86, 0.62);   // pale gold
-  vec3 c2 = vec3(1.00, 0.96, 0.85);   // warm white
-  vec3 c3 = vec3(1.00, 1.00, 0.98);   // neutral white
-  vec3 c4 = vec3(0.92, 0.97, 1.05);   // very faint cool white (peak)
-  // Smoothed blends so there are no segment boundaries.
+  // White-dominated but with a clear cool/warm radial separation:
+  //   t = 0.0  : warm tan / khaki        (outer, low temp)
+  //   t = 0.3  : warm yellow-white       (mid-outer)
+  //   t = 0.6  : neutral warm white      (mid)
+  //   t = 0.85 : cool white              (inner)
+  //   t = 1.0  : faintly blue-white      (ISCO peak)
+  // Saturation kept low so it reads scientific, but the temperature
+  // gradient is clearly visible (not a uniform white sheet).
+  vec3 c0 = vec3(0.92, 0.74, 0.50);   // warm tan
+  vec3 c1 = vec3(1.00, 0.92, 0.72);   // warm yellow-white
+  vec3 c2 = vec3(1.00, 0.98, 0.90);   // warm white
+  vec3 c3 = vec3(0.97, 1.00, 1.02);   // cool white
+  vec3 c4 = vec3(0.84, 0.92, 1.10);   // faint blue-white
   float a = smoothstep(0.00, 0.30, t);
   float b = smoothstep(0.20, 0.55, t);
   float c = smoothstep(0.50, 0.85, t);
-  float d = smoothstep(0.80, 1.00, t);
+  float d = smoothstep(0.82, 1.00, t);
   vec3 col = mix(c0, c1, a);
   col      = mix(col, c2, b);
   col      = mix(col, c3, c);
@@ -654,32 +654,33 @@ vec4 sampleDisk(vec3 p, vec3 viewDir) {
   float rRel = r / max(u_diskInner, 1e-3);
   float boundary = max(1.0 - sqrt(1.0 / max(rRel, 1.001)), 0.0);
   float tempProfile = pow(rRel, -0.75) * pow(boundary, 0.25);
-  // Calibrated peak: profile maxes near rRel ~= 1.36, value ~= 0.41.
-  // Multiply by 1/peak so peak hits ~1.0.
-  float temp = clamp(tempProfile * 2.45, 0.0, 1.0);
+  // Calibrate so the peak hits ~1.0 AND the outer edge falls into the
+  // warm-tan band (t<~0.20). The previous 2.45 calibration squashed
+  // the gradient, leaving the whole disk reading as white.
+  float temp = clamp(tempProfile * 1.85 - 0.05, 0.0, 1.0);
 
   // Gravitational redshift: photons climbing out of the well lose
-  // energy, so the inner edge of the disk dims and reddens slightly.
-  // Use sqrt(1 - rs/r) (Schwarzschild factor for static observer at
-  // infinity). Gentle: still keep the inner ring hot, just slightly
-  // pulled down.
+  // energy. Stronger weighting now so the very inner ring isn't
+  // saturated white.
   float gr = sqrt(max(1.0 - u_rs / max(r, u_rs * 1.001), 0.0));
-  temp *= mix(0.65, 1.0, gr);
+  temp *= mix(0.50, 1.0, gr);
   vec3 tint = blackbodyTint(temp);
 
-  // Strong relativistic Doppler beaming.
+  // Strong relativistic Doppler beaming. Restored to a more obvious
+  // brightness asymmetry so the approaching side reads visibly hotter
+  // and brighter than the receding side.
   vec3 vDir = normalize(vec3(-p.z, 0.0, p.x));
   float beta = clamp(sqrt(u_rs / max(r, u_rs * 1.4)) * 0.95, 0.0, 0.92);
   float mu = dot(vDir, viewDir) * beta;
   float gamma = 1.0 / sqrt(max(1.0 - beta * beta, 1e-4));
   float D = 1.0 / max(gamma * (1.0 - mu), 1e-3);
-  float beam = pow(D, 3.5);
-  // Doppler colour shift: subtle, not a flat coloured patch.
-  //   approaching  -> very faint cool white tint (no neon blue)
-  //   receding     -> slightly warmer, mildly desaturated
-  vec3 shiftBlue = vec3(0.92, 0.98, 1.10);
-  vec3 shiftRed  = vec3(1.10, 0.92, 0.78);
-  vec3 shift = (D >= 1.0) ? mix(vec3(1.0), shiftBlue, clamp((D - 1.0) * 0.7, 0.0, 1.0))
+  float beam = pow(D, 3.8);
+  // Doppler colour shift: still soft (no neon), but not so faint that
+  // it disappears into the white. Approaching -> cooler, receding ->
+  // warmer; magnitude scales with how far D is from unity.
+  vec3 shiftBlue = vec3(0.86, 0.95, 1.18);
+  vec3 shiftRed  = vec3(1.18, 0.88, 0.70);
+  vec3 shift = (D >= 1.0) ? mix(vec3(1.0), shiftBlue, clamp((D - 1.0) * 1.2, 0.0, 1.0))
                           : mix(shiftRed, vec3(1.0), clamp(D, 0.0, 1.0));
 
   // Photon ring: bright thin band at r ~ 1.5 rs.
