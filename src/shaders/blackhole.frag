@@ -580,27 +580,28 @@ vec3 sampleStars(vec3 dir) {
 // Blackbody-ish temperature->color via piecewise tint table.
 
 vec3 blackbodyTint(float t) {
-  // Realistic black-body temperature ramp for an accretion disk, biased
-  // toward warm tones so the disk reads orange/gold across most of its
-  // radius. Only a thin innermost ring near ISCO reaches white-blue.
-  //   t < 0.15  : deep red ember (cool outer edge)
-  //   0.15-0.40 : orange-red (mid-outer)
-  //   0.40-0.65 : amber (mid)
-  //   0.65-0.85 : gold (mid-inner)
-  //   0.85-0.95 : warm white (inner)
-  //   > 0.95    : blue-white (very hot ISCO ring, narrow band)
-  vec3 c0 = vec3(0.40, 0.07, 0.02);   // deep red ember
-  vec3 c1 = vec3(0.95, 0.28, 0.07);   // orange-red
-  vec3 c2 = vec3(1.00, 0.50, 0.16);   // amber
-  vec3 c3 = vec3(1.00, 0.72, 0.32);   // gold
-  vec3 c4 = vec3(1.00, 0.88, 0.55);   // warm white
-  vec3 c5 = vec3(0.85, 0.92, 1.10);   // hot blue-white
-  if (t < 0.15) return mix(c0, c1, t / 0.15);
-  if (t < 0.40) return mix(c1, c2, (t - 0.15) / 0.25);
-  if (t < 0.65) return mix(c2, c3, (t - 0.40) / 0.25);
-  if (t < 0.85) return mix(c3, c4, (t - 0.65) / 0.20);
-  if (t < 0.95) return mix(c4, c5, (t - 0.85) / 0.10);
-  return c5;
+  // Low-saturation, white-dominated palette for a more "scientific
+  // visualisation" look instead of an art-piece amber filter:
+  //   t = 0.0  : warm sand / khaki (very low sat)
+  //   t = 0.5  : warm white
+  //   t = 0.85 : neutral white
+  //   t = 1.0  : faintly blue-white (slightly cool)
+  // Continuous mix via a smoothed parameter; no hard segment seams.
+  vec3 c0 = vec3(0.85, 0.66, 0.42);   // warm sand (cool outer edge)
+  vec3 c1 = vec3(1.00, 0.86, 0.62);   // pale gold
+  vec3 c2 = vec3(1.00, 0.96, 0.85);   // warm white
+  vec3 c3 = vec3(1.00, 1.00, 0.98);   // neutral white
+  vec3 c4 = vec3(0.92, 0.97, 1.05);   // very faint cool white (peak)
+  // Smoothed blends so there are no segment boundaries.
+  float a = smoothstep(0.00, 0.30, t);
+  float b = smoothstep(0.20, 0.55, t);
+  float c = smoothstep(0.50, 0.85, t);
+  float d = smoothstep(0.80, 1.00, t);
+  vec3 col = mix(c0, c1, a);
+  col      = mix(col, c2, b);
+  col      = mix(col, c3, c);
+  col      = mix(col, c4, d);
+  return col;
 }
 
 // Single-point disk sample at an equatorial-plane crossing.
@@ -673,9 +674,12 @@ vec4 sampleDisk(vec3 p, vec3 viewDir) {
   float gamma = 1.0 / sqrt(max(1.0 - beta * beta, 1e-4));
   float D = 1.0 / max(gamma * (1.0 - mu), 1e-3);
   float beam = pow(D, 3.5);
-  vec3 shiftBlue = vec3(0.65, 0.88, 1.30);
-  vec3 shiftRed  = vec3(1.30, 0.65, 0.35);
-  vec3 shift = (D >= 1.0) ? mix(vec3(1.0), shiftBlue, clamp(D - 1.0, 0.0, 1.2))
+  // Doppler colour shift: subtle, not a flat coloured patch.
+  //   approaching  -> very faint cool white tint (no neon blue)
+  //   receding     -> slightly warmer, mildly desaturated
+  vec3 shiftBlue = vec3(0.92, 0.98, 1.10);
+  vec3 shiftRed  = vec3(1.10, 0.92, 0.78);
+  vec3 shift = (D >= 1.0) ? mix(vec3(1.0), shiftBlue, clamp((D - 1.0) * 0.7, 0.0, 1.0))
                           : mix(shiftRed, vec3(1.0), clamp(D, 0.0, 1.0));
 
   // Photon ring: bright thin band at r ~ 1.5 rs.
