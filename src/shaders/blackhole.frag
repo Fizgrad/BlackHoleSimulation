@@ -208,18 +208,27 @@ vec3 starLayer(vec3 dir, float density, float scale, float seed,
 //   - Multi-scale ridged dust filaments.
 vec3 galaxyBand(vec3 dir) {
   vec3 bandN = normalize(vec3(0.30, 0.86, 0.40));
+  vec3 corePt = normalize(vec3(0.70, 0.15, -0.60));
   float latRaw = dot(dir, bandN);
   vec3 along3  = normalize(dir - bandN * latRaw);
 
+  // Local galactic coordinates. This fixes the previous "tree trunk"
+  // artefact: using only along3 ignored latitude, so noise was constant
+  // along vertical lines. Now every texture samples (longitude, latitude).
+  vec3 galX = normalize(corePt - bandN * dot(corePt, bandN));
+  vec3 galY = normalize(cross(bandN, galX));
+  float lon = atan(dot(dir, galY), dot(dir, galX));
+  vec3 bandCoord = vec3(lon, latRaw * 7.0, 0.0);
+
   // Warp the band's centerline with low-frequency noise along it. This
   // is the single biggest "anti-perfect" change.
-  float warp1 = fbm(along3 * 1.2 + 5.5, 4) * 2.0 - 1.0;
-  float warp2 = fbm(along3 * 2.6 + 17.1, 4) * 2.0 - 1.0;
+  float warp1 = fbm(bandCoord * vec3(0.9, 0.18, 1.0) + 5.5, 4) * 2.0 - 1.0;
+  float warp2 = fbm(bandCoord * vec3(1.8, 0.35, 1.0) + 17.1, 4) * 2.0 - 1.0;
   float lat   = latRaw - (warp1 * 0.045 + warp2 * 0.020);
 
   // Variable band thickness along its length: thicker near the bulge,
   // thinner in the anticentre, with gaps and bulges driven by noise.
-  float thickN = fbm(along3 * 1.8 + 11.0, 4);
+  float thickN = fbm(bandCoord * vec3(1.3, 0.22, 1.0) + 11.0, 4);
   float thick  = mix(0.55, 1.7, thickN);  // 0.55x..1.7x
 
   // Main band: only one Gaussian envelope now (no rigid parallel arms).
@@ -227,12 +236,11 @@ vec3 galaxyBand(vec3 dir) {
   float band = exp(-(lat * lat) / (thick * thick) * 22.0);
 
   // Multi-scale brightness texture along the band.
-  float n0   = fbm(along3 * 3.5,  5);
-  float n1   = fbm(along3 * 7.0  + 33.1, 4);
-  float n2   = fbm(along3 * 14.0 - 7.7,  4);
+  float n0   = fbm(bandCoord * vec3(2.4, 0.55, 1.0), 5);
+  float n1   = fbm(bandCoord * vec3(5.2, 1.10, 1.0) + 33.1, 4);
+  float n2   = fbm(bandCoord * vec3(10.0, 2.20, 1.0) - 7.7, 4);
 
   // Galactic centre direction (bulge): brighter, broader, asymmetric.
-  vec3 corePt = normalize(vec3(0.70, 0.15, -0.60));
   float coreCos = max(0.0, dot(dir, corePt));
   // Asymmetric bulge: distort the radial coord with noise so it's not
   // a perfect circle around corePt.
@@ -243,17 +251,17 @@ vec3 galaxyBand(vec3 dir) {
   // Star clouds: bright noisy hotspots scattered along the band, plus
   // a couple of stronger knots concentrated near the bulge (mimics
   // Sgr/Cyg/Sct star clouds).
-  float cloudN = pow(fbm(along3 * 5.5 + 4.4, 4), 3.0);
+  float cloudN = pow(fbm(bandCoord * vec3(4.0, 0.9, 1.0) + 4.4, 4), 3.0);
   float starClouds = cloudN * exp(-lat * lat * 30.0) * (0.4 + 1.6 * coreF);
 
   // Dust lanes: ridged noise carves dark filaments. The dust lane
   // doesn't run perfectly along midplane — it follows its own warped
   // curve offset slightly below the geometric centre (Milky Way as seen
   // from Earth has the dust lane below the band's apparent midline).
-  float dustWarp = fbm(along3 * 1.5 + 22.0, 4) * 2.0 - 1.0;
+  float dustWarp = fbm(bandCoord * vec3(1.1, 0.35, 1.0) + 22.0, 4) * 2.0 - 1.0;
   float dustLat  = lat + 0.025 + dustWarp * 0.04;
-  float dustFine   = ridged(along3 * 7.5  + 11.3, 5);
-  float dustCoarse = ridged(along3 * 2.4  - 4.1,  4);
+  float dustFine   = ridged(bandCoord * vec3(6.0, 3.0, 1.0) + 11.3, 5);
+  float dustCoarse = ridged(bandCoord * vec3(1.7, 1.0, 1.0) - 4.1,  4);
   // Concentrated dust along the warped lane.
   float duskMask = exp(-dustLat * dustLat * 200.0);
   float greatRift = duskMask * smoothstep(-0.2, 0.5, coreF);
