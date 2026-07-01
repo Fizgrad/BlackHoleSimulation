@@ -65,6 +65,11 @@ const U = getUniformLocations(gl, sceneProgram, [
   'u_starCol[10]',
   'u_starCol[11]',
   'u_starRadius',
+  'u_showDisk',
+  'u_showPhotonRing',
+  'u_showJets',
+  'u_showOrbitStars',
+  'u_showNebulae',
 ] as const);
 
 const Udown = getUniformLocations(gl, downsampleProgram, [
@@ -232,6 +237,11 @@ function renderScene(t: number): void {
   gl.uniform3f(U.u_camRight, basis.right[0], basis.right[1], basis.right[2]);
   gl.uniform3f(U.u_camUp, basis.up[0], basis.up[1], basis.up[2]);
   gl.uniform1f(U.u_fovTan, basis.fovTan);
+  gl.uniform1i(U.u_showDisk, features.disk ? 1 : 0);
+  gl.uniform1i(U.u_showPhotonRing, features.photonRing ? 1 : 0);
+  gl.uniform1i(U.u_showJets, features.jets ? 1 : 0);
+  gl.uniform1i(U.u_showOrbitStars, features.orbitStars ? 1 : 0);
+  gl.uniform1i(U.u_showNebulae, features.nebulae ? 1 : 0);
 
   for (let i = 0; i < STAR_COUNT; i++) {
     const locP = U[`u_starPos[${i}]` as keyof typeof U];
@@ -247,6 +257,40 @@ const BLOOM_THRESHOLD = 1.0; // values above this get bloomed
 const BLOOM_RADIUS = 1.0;
 const BLOOM_STRENGTH = 0.08;
 const EXPOSURE = 1.0;
+
+interface FeatureToggles {
+  bloom: boolean;
+  disk: boolean;
+  photonRing: boolean;
+  jets: boolean;
+  orbitStars: boolean;
+  nebulae: boolean;
+}
+
+const features: FeatureToggles = {
+  bloom: true,
+  disk: true,
+  photonRing: true,
+  jets: true,
+  orbitStars: true,
+  nebulae: true,
+};
+
+function bindToggle(id: string, key: keyof FeatureToggles): void {
+  const el = document.getElementById(id) as HTMLInputElement | null;
+  if (!el) return;
+  el.checked = features[key];
+  el.addEventListener('change', () => {
+    features[key] = el.checked;
+  });
+}
+
+bindToggle('toggle-bloom', 'bloom');
+bindToggle('toggle-disk', 'disk');
+bindToggle('toggle-photon-ring', 'photonRing');
+bindToggle('toggle-jets', 'jets');
+bindToggle('toggle-orbit-stars', 'orbitStars');
+bindToggle('toggle-nebulae', 'nebulae');
 
 function renderBloom(): void {
   gl.useProgram(downsampleProgram);
@@ -295,7 +339,7 @@ function renderComposite(): void {
   gl.activeTexture(gl.TEXTURE1);
   gl.bindTexture(gl.TEXTURE_2D, bloomMips[0].tex);
   gl.uniform1i(Ucomp.u_bloom, 1);
-  gl.uniform1f(Ucomp.u_bloomStrength, BLOOM_STRENGTH);
+  gl.uniform1f(Ucomp.u_bloomStrength, features.bloom ? BLOOM_STRENGTH : 0.0);
   gl.uniform1f(Ucomp.u_exposure, EXPOSURE);
   gl.drawArrays(gl.TRIANGLES, 0, 3);
 }
@@ -306,7 +350,7 @@ function frame(): void {
   const t = (now - t0) * 0.001 + 42.0;
 
   renderScene(t);
-  renderBloom();
+  if (features.bloom) renderBloom();
   renderComposite();
 
   updateFps(now);

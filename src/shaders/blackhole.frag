@@ -45,6 +45,12 @@ uniform vec3  u_starPos[STAR_MAX];
 uniform vec3  u_starCol[STAR_MAX];
 uniform float u_starRadius;
 
+uniform bool u_showDisk;
+uniform bool u_showPhotonRing;
+uniform bool u_showJets;
+uniform bool u_showOrbitStars;
+uniform bool u_showNebulae;
+
 // --- noise primitives ---------------------------------------------------
 
 float hash31(vec3 p) {
@@ -564,7 +570,7 @@ vec3 sampleStars(vec3 dir) {
   vec3 ext = dustExtinction(dir);
   stars *= ext;
 
-  vec3 sky = galaxyBand(dir) + nebulae(dir) + globularClusters(dir);
+  vec3 sky = u_showNebulae ? (galaxyBand(dir) + nebulae(dir) + globularClusters(dir)) : vec3(0.0);
   return stars + sky;
 }
 
@@ -684,7 +690,7 @@ vec4 sampleDisk(vec3 p, vec3 viewDir) {
                           : mix(shiftRed, vec3(1.0), clamp(D, 0.0, 1.0));
 
   // Photon ring: bright thin band at r ~ 1.5 rs.
-  float pring = exp(-pow((r - 1.5 * u_rs) / (u_rs * 0.18), 2.0));
+  float pring = u_showPhotonRing ? exp(-pow((r - 1.5 * u_rs) / (u_rs * 0.18), 2.0)) : 0.0;
   vec3 pringEmit = vec3(1.05, 0.85, 0.55) * pring * 2.0;
 
   // ISCO plunging wisps: extra reddish glow inside rIn down to ~rs.
@@ -921,23 +927,25 @@ Hit traceRay(vec3 ro, vec3 rd) {
 
     // Check orbiting stars: if the ray-sample midpoint passes near a star,
     // blend its emission in front-to-back. Stars are small bright volumes.
-    vec3 pMid = 0.5 * (prevPos + pNext);
-    for (int si = 0; si < STAR_MAX; si++) {
-      if (si >= u_starCount) break;
-      float d = length(pMid - u_starPos[si]);
-      if (d < u_starRadius * 1.5) {
-        float bright = exp(-(d * d) / (u_starRadius * u_starRadius * 0.06));
-        float sa = clamp(bright * 0.9, 0.0, 1.0);
-        float trans = 1.0 - h.diskAlpha;
-        h.diskCol   += trans * u_starCol[si] * bright;
-        h.diskAlpha += trans * sa;
-        // Only one star contributes (the nearest along the ray).
-        if (h.diskAlpha > 0.6) break;
+    if (u_showOrbitStars) {
+      vec3 pMid = 0.5 * (prevPos + pNext);
+      for (int si = 0; si < STAR_MAX; si++) {
+        if (si >= u_starCount) break;
+        float d = length(pMid - u_starPos[si]);
+        if (d < u_starRadius * 1.5) {
+          float bright = exp(-(d * d) / (u_starRadius * u_starRadius * 0.06));
+          float sa = clamp(bright * 0.9, 0.0, 1.0);
+          float trans = 1.0 - h.diskAlpha;
+          h.diskCol   += trans * u_starCol[si] * bright;
+          h.diskAlpha += trans * sa;
+          // Only one star contributes (the nearest along the ray).
+          if (h.diskAlpha > 0.6) break;
+        }
       }
     }
 
     // Equatorial-plane crossing: single-point disk sample, front-to-back.
-    if ((prevPos.y * pNext.y) < 0.0) {
+    if (u_showDisk && (prevPos.y * pNext.y) < 0.0) {
       float t = prevPos.y / (prevPos.y - pNext.y);
       vec3 hp = mix(prevPos, pNext, t);
       float rd2 = length(hp.xz);
@@ -971,7 +979,7 @@ Hit traceRay(vec3 ro, vec3 rd) {
     // Relativistic jets: accumulate emission along the geodesic segment.
     // Cheap volumetric integration at the segment midpoint, weighted by
     // segment length. Lensing is automatic since we sample on the bent ray.
-    {
+    if (u_showJets) {
       vec3 jMid = 0.5 * (prevPos + pNext);
       vec3 segDir = pNext - prevPos;
       float segLen = length(segDir);
