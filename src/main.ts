@@ -39,36 +39,9 @@ const U = getUniformLocations(gl, sceneProgram, [
   'u_diskOuter',
   'u_maxSteps',
   'u_dPhi',
-  'u_starCount',
-  'u_starPos[0]',
-  'u_starPos[1]',
-  'u_starPos[2]',
-  'u_starPos[3]',
-  'u_starPos[4]',
-  'u_starPos[5]',
-  'u_starPos[6]',
-  'u_starPos[7]',
-  'u_starPos[8]',
-  'u_starPos[9]',
-  'u_starPos[10]',
-  'u_starPos[11]',
-  'u_starCol[0]',
-  'u_starCol[1]',
-  'u_starCol[2]',
-  'u_starCol[3]',
-  'u_starCol[4]',
-  'u_starCol[5]',
-  'u_starCol[6]',
-  'u_starCol[7]',
-  'u_starCol[8]',
-  'u_starCol[9]',
-  'u_starCol[10]',
-  'u_starCol[11]',
-  'u_starRadius',
   'u_showDisk',
   'u_showPhotonRing',
   'u_showJets',
-  'u_showOrbitStars',
   'u_showNebulae',
 ] as const);
 
@@ -108,24 +81,6 @@ const physics = {
   maxSteps: 400,
   dPhi: 0.035,
 };
-
-// Orbiting stars: each has an orbital radius, angular speed, and color.
-// Radii are in units of rs; orbital speed scales as 1/r^1.5 (Keplerian).
-const STAR_COUNT = 12;
-const stars = [
-  { r: 4.2,  speed: 0.85, col: [1.00, 0.92, 0.78], tilt: 0.02 },
-  { r: 5.5,  speed: 0.62, col: [0.72, 0.78, 1.00], tilt:-0.03 },
-  { r: 7.0,  speed: 0.45, col: [1.00, 0.85, 0.60], tilt: 0.05 },
-  { r: 8.5,  speed: 0.33, col: [0.90, 0.95, 1.00], tilt:-0.01 },
-  { r: 10.0, speed: 0.26, col: [1.00, 0.72, 0.50], tilt: 0.04 },
-  { r: 11.5, speed: 0.21, col: [0.78, 0.85, 1.00], tilt:-0.02 },
-  { r: 13.0, speed: 0.17, col: [1.00, 0.90, 0.70], tilt: 0.03 },
-  { r: 15.0, speed: 0.14, col: [0.70, 0.80, 1.00], tilt:-0.04 },
-  { r: 6.2,  speed: 0.52, col: [1.00, 0.65, 0.40], tilt: 0.06 },
-  { r: 9.0,  speed: 0.31, col: [0.85, 0.90, 1.00], tilt:-0.03 },
-  { r: 12.0, speed: 0.19, col: [1.00, 0.80, 0.55], tilt: 0.01 },
-  { r: 17.0, speed: 0.12, col: [0.75, 0.82, 1.00], tilt:-0.05 },
-];
 
 const DPR_CAP = 1.5;
 
@@ -201,31 +156,11 @@ gl.uniform1f(U.u_diskInner, physics.diskInner);
 gl.uniform1f(U.u_diskOuter, physics.diskOuter);
 gl.uniform1i(U.u_maxSteps, physics.maxSteps);
 gl.uniform1f(U.u_dPhi, physics.dPhi);
-gl.uniform1i(U.u_starCount, STAR_COUNT);
-gl.uniform1f(U.u_starRadius, 0.12);
-
-// Pre-allocate Float32Array for star position/color uploads.
-const starPosBuf = new Float32Array(3 * STAR_COUNT);
-const starColBuf = new Float32Array(3 * STAR_COUNT);
-for (let i = 0; i < STAR_COUNT; i++) {
-  const c = stars[i];
-  starColBuf[i * 3 + 0] = c.col[0];
-  starColBuf[i * 3 + 1] = c.col[1];
-  starColBuf[i * 3 + 2] = c.col[2];
-}
 
 // --- render loop ---------------------------------------------------------
 
 function renderScene(t: number): void {
   const basis = computeCameraBasis(cam);
-
-  for (let i = 0; i < STAR_COUNT; i++) {
-    const s = stars[i];
-    const ang = s.speed * t + i * 1.8;
-    starPosBuf[i * 3 + 0] = s.r * Math.cos(ang);
-    starPosBuf[i * 3 + 1] = s.r * s.tilt * Math.sin(ang * 3.0);
-    starPosBuf[i * 3 + 2] = s.r * Math.sin(ang);
-  }
 
   bindRenderTarget(gl, sceneRT);
   gl.useProgram(sceneProgram);
@@ -240,15 +175,7 @@ function renderScene(t: number): void {
   gl.uniform1i(U.u_showDisk, features.disk ? 1 : 0);
   gl.uniform1i(U.u_showPhotonRing, features.photonRing ? 1 : 0);
   gl.uniform1i(U.u_showJets, features.jets ? 1 : 0);
-  gl.uniform1i(U.u_showOrbitStars, features.orbitStars ? 1 : 0);
   gl.uniform1i(U.u_showNebulae, features.nebulae ? 1 : 0);
-
-  for (let i = 0; i < STAR_COUNT; i++) {
-    const locP = U[`u_starPos[${i}]` as keyof typeof U];
-    const locC = U[`u_starCol[${i}]` as keyof typeof U];
-    if (locP) gl.uniform3f(locP, starPosBuf[i * 3], starPosBuf[i * 3 + 1], starPosBuf[i * 3 + 2]);
-    if (locC) gl.uniform3f(locC, starColBuf[i * 3], starColBuf[i * 3 + 1], starColBuf[i * 3 + 2]);
-  }
 
   gl.drawArrays(gl.TRIANGLES, 0, 3);
 }
@@ -263,7 +190,6 @@ interface FeatureToggles {
   disk: boolean;
   photonRing: boolean;
   jets: boolean;
-  orbitStars: boolean;
   nebulae: boolean;
 }
 
@@ -272,7 +198,6 @@ const features: FeatureToggles = {
   disk: true,
   photonRing: true,
   jets: true,
-  orbitStars: true,
   nebulae: true,
 };
 
@@ -289,7 +214,6 @@ bindToggle('toggle-bloom', 'bloom');
 bindToggle('toggle-disk', 'disk');
 bindToggle('toggle-photon-ring', 'photonRing');
 bindToggle('toggle-jets', 'jets');
-bindToggle('toggle-orbit-stars', 'orbitStars');
 bindToggle('toggle-nebulae', 'nebulae');
 
 function renderBloom(): void {

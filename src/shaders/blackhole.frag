@@ -39,16 +39,9 @@ uniform float u_diskOuter;
 uniform int   u_maxSteps;
 uniform float u_dPhi;
 
-#define STAR_MAX 12
-uniform int   u_starCount;
-uniform vec3  u_starPos[STAR_MAX];
-uniform vec3  u_starCol[STAR_MAX];
-uniform float u_starRadius;
-
 uniform bool u_showDisk;
 uniform bool u_showPhotonRing;
 uniform bool u_showJets;
-uniform bool u_showOrbitStars;
 uniform bool u_showNebulae;
 
 // --- noise primitives ---------------------------------------------------
@@ -924,25 +917,6 @@ Hit traceRay(vec3 ro, vec3 rd) {
 
     float rNext = 1.0 / uNext;
     vec3 pNext = (cos(phiNext) * e1c + sin(phiNext) * e2) * rNext;
-
-    // Check orbiting stars: if the ray-sample midpoint passes near a star,
-    // blend its emission in front-to-back. Stars are small bright volumes.
-    if (u_showOrbitStars) {
-      vec3 pMid = 0.5 * (prevPos + pNext);
-      for (int si = 0; si < STAR_MAX; si++) {
-        if (si >= u_starCount) break;
-        float d = length(pMid - u_starPos[si]);
-        if (d < u_starRadius * 1.5) {
-          float bright = exp(-(d * d) / (u_starRadius * u_starRadius * 0.06));
-          float sa = clamp(bright * 0.9, 0.0, 1.0);
-          float trans = 1.0 - h.diskAlpha;
-          h.diskCol   += trans * u_starCol[si] * bright;
-          h.diskAlpha += trans * sa;
-          // Only one star contributes (the nearest along the ray).
-          if (h.diskAlpha > 0.6) break;
-        }
-      }
-    }
 
     // Equatorial-plane crossing: single-point disk sample, front-to-back.
     if (u_showDisk && (prevPos.y * pNext.y) < 0.0) {

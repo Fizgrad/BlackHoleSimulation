@@ -2,7 +2,7 @@
 
 A real-time, GPU-raytraced **Schwarzschild black hole** rendered in raw WebGL2,
 with relativistic accretion disk, plasma jets, gravitational lensing of a
-procedural starfield, HDR bloom, and a few orbiting stars. No engines, no
+procedural starfield, HDR bloom, and an interactive feature toggle panel. No engines, no
 wrappers — every pixel is a hand-rolled fragment-shader geodesic.
 
 🌌 **Live demo:** https://fizgrad.github.io/BlackHoleSimulation/
@@ -41,12 +41,9 @@ wrappers — every pixel is a hand-rolled fragment-shader geodesic.
   pink HII regions.
 - **7 distant galaxies** (spiral / elliptical / starburst / barred), each
   with logarithmic spiral arms, dust lanes, HII knots, and bulge.
-- **6 nebulae**, **4 layers of stars** with realistic stellar population
-  bias (M/K dwarfs dominate), **globular clusters**, and **selective dust
-  reddening** so stars behind dust lanes appear redder, not just dimmer.
-- **12 stars in Keplerian orbit** around the black hole, with their light
-  bent by the same geodesic integrator (multi-image lensing visible
-  near the silhouette).
+- **6 nebulae**, **4 layers of stars**, **globular clusters**, and
+  **selective dust reddening** so stars behind dust lanes appear redder,
+  not just dimmer.
 
 ### Pipeline
 - HDR scene rendered to an `RGBA16F` floating-point FBO.
@@ -54,7 +51,8 @@ wrappers — every pixel is a hand-rolled fragment-shader geodesic.
   bloom) into shrinking float render targets.
 - 5-mip **tent-filter additive upsample** chain for soft, energy-preserving
   glow.
-- Final composite pass: scene + bloom → ACES tonemap → sRGB gamma.
+- Final composite pass: scene + bloom → hue-preserving Reinhard tonemap →
+  sRGB gamma.
 - FPS / frame-time counter (top-right).
 
 ## Stack
