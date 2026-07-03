@@ -29,8 +29,9 @@ wrappers — every pixel is a hand-rolled fragment-shader geodesic.
 ### Visuals
 - **Accretion disk** with FBM turbulence, Keplerian differential rotation,
   noise-warped inner/outer edges, ISCO plunging wisps, photon-ring boost,
-  and a Gargantua-style amber/orange palette tipped with hot blue-white
-  near ISCO.
+  and a low-saturation white-dominant palette with subtle warm/cool radial
+  separation (warm tan outer → cool white inner → faint blue-white at
+  ISCO). A Shakura-Sunyaev temperature profile drives the radial gradient.
 - **Relativistic jets** along the rotation axis with kink-instability axis
   wobble, limb-brightened tube profile, periodic plasma knots, a
   termination shock at the far end, Kelvin-Helmholtz boundary instabilities,
@@ -38,12 +39,14 @@ wrappers — every pixel is a hand-rolled fragment-shader geodesic.
 - **Detailed Milky-Way-like background**: noise-warped centerline,
   variable thickness, asymmetric bulge, "Great Rift" dust lane offset
   from the band centerline, Sagittarius-style star clouds, procedural
-  pink HII regions.
+  pink HII regions. Textures use local galactic (longitude, latitude)
+  coordinates so structure stretches along the band, not across it.
 - **7 distant galaxies** (spiral / elliptical / starburst / barred), each
   with logarithmic spiral arms, dust lanes, HII knots, and bulge.
-- **6 nebulae**, **4 layers of stars**, **globular clusters**, and
-  **selective dust reddening** so stars behind dust lanes appear redder,
-  not just dimmer.
+- **6 nebulae**, **4 layers of stars** with realistic naked-eye colour
+  distribution (white-yellow dominant, red giant tail, blue giant tail),
+  **globular clusters**, and **selective dust reddening** so stars behind
+  dust lanes appear redder, not just dimmer.
 
 ### Pipeline
 - HDR scene rendered to an `RGBA16F` floating-point FBO.
@@ -52,8 +55,12 @@ wrappers — every pixel is a hand-rolled fragment-shader geodesic.
 - 5-mip **tent-filter additive upsample** chain for soft, energy-preserving
   glow.
 - Final composite pass: scene + bloom → hue-preserving Reinhard tonemap →
-  sRGB gamma.
+  sRGB gamma. Luminance is compressed while hue/saturation are preserved,
+  so the brightest disk regions retain texture instead of clipping to
+  white.
 - FPS / frame-time counter (top-right).
+- **Feature toggle panel** (top-left) for Bloom, Accretion disk, Photon
+  ring, Relativistic jets, and Nebulae / galaxies.
 
 ## Stack
 
@@ -98,7 +105,7 @@ src/
     blackhole.frag              # the heart: geodesic raymarcher + disk + jets + sky
     bloom_downsample.frag       # CoD-AW 13-tap downsample with bright-pass
     bloom_upsample.frag         # 3×3 tent-filter additive upsample
-    composite.frag              # HDR + bloom → ACES → sRGB
+    composite.frag              # HDR + bloom -> Reinhard -> sRGB
 public/                         # (currently empty; cubemap textures could go here)
 ```
 
@@ -107,11 +114,11 @@ trigger TypeScript rebuilds.
 
 ## Notes on the physics shortcuts
 
-- **Schwarzschild only** — no spin (Kerr). The photon ring is still
-  approximated with a thin emission shell at `r = 1.5·rs`.
+- **Schwarzschild only** — no spin (Kerr). The photon ring is approximated
+  with a thin emission shell at `r = 1.5·rs` (toggleable via UI).
 - The disk is a **geometrically thin slab** (one equatorial-plane sample
-  per ray crossing) for performance; an earlier branch used full volume
-  marching but was too expensive.
+  per ray crossing). Per-ray `dPhi` jitter dithers the discrete crossings
+  so they don't produce concentric banding.
 - Jets are **emissive volumes** with a phenomenological model — no MHD,
   no synchrotron self-Compton spectrum, just shapes and colours that
   reproduce the observed look.
