@@ -577,7 +577,6 @@ vec3 sampleStars(vec3 dir) {
   vec3 stars = vec3(0.0);
   stars += starLayer(dir, 0.05,  120.0,  1.0, plane) * 1.4;
   stars += starLayer(dir, 0.14,  320.0,  9.7, plane) * 0.8;
-  stars += starLayer(dir, 0.30,  800.0, 17.3, plane) * 0.30;
 
   // Selective extinction: dust reddens stars instead of just dimming.
   vec3 ext = dustExtinction(dir);
