@@ -279,7 +279,92 @@ function frame(): void {
 
   updateFps(now);
 
-  requestAnimationFrame(frame);
+requestAnimationFrame(frame);
+
+// --- 4K capture -----------------------------------------------------------
+
+const capture4kBtn = document.getElementById('capture-4k') as HTMLButtonElement | null;
+
+function capture4K(): void {
+  if (!capture4kBtn) return;
+  capture4kBtn.disabled = true;
+  capture4kBtn.textContent = 'Rendering 4K...';
+
+  // Defer to next frame so the button text updates before the heavy GPU work.
+  requestAnimationFrame(() => {
+    const W = 3840;
+    const H = 2160;
+
+    // Resize all render targets to 4K.
+    resizeRenderTarget(gl, sceneRT, W, H);
+    let mw = W;
+    let mh = H;
+    for (let i = 0; i < BLOOM_MIPS; i++) {
+      mw = Math.max(1, Math.floor(mw / 2));
+      mh = Math.max(1, Math.floor(mh / 2));
+      resizeRenderTarget(gl, bloomMips[i], mw, mh);
+    }
+
+    // Render one frame at 4K.
+    const t = (performance.now() - t0) * 0.001 + 42.0;
+    renderScene(t);
+    if (features.bloom) renderBloom();
+    renderComposite();
+
+    // Read pixels from the default framebuffer (canvas-bound).
+    // Must be called synchronously right after the draw, before
+    // the browser composites (preserveDrawingBuffer is false).
+    canvas!.width = W;
+    canvas!.height = H;
+    gl.viewport(0, 0, W, H);
+    // Re-render composite to the 4K canvas.
+    renderComposite();
+
+    const pixels = new Uint8Array(W * H * 4);
+    gl.readPixels(0, 0, W, H, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+
+    // Flip Y (WebGL origin is bottom-left) and build an ImageData.
+    const off = document.createElement('canvas');
+    off.width = W;
+    off.height = H;
+    const ctx2d = off.getContext('2d');
+    if (!ctx2d) {
+      capture4kBtn.disabled = false;
+      capture4kBtn.textContent = 'Capture 4K PNG';
+      return;
+    }
+    const imgData = ctx2d.createImageData(W, H);
+    const dst = imgData.data;
+    for (let y = 0; y < H; y++) {
+      const srcRow = (H - 1 - y) * W * 4;
+      const dstRow = y * W * 4;
+      for (let x = 0; x < W * 4; x++) {
+        dst[dstRow + x] = pixels[srcRow + x];
+      }
+    }
+    ctx2d.putImageData(imgData, 0, 0);
+
+    // Trigger download.
+    off.toBlob((blob) => {
+      if (blob) {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `blackhole_4k_${Date.now()}.png`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      }
+      // Restore normal resolution.
+      capture4kBtn.disabled = false;
+      capture4kBtn.textContent = 'Capture 4K PNG';
+      resize();
+    }, 'image/png');
+  });
+}
+
+capture4kBtn?.addEventListener('click', capture4K);
 }
 
 // --- FPS HUD --------------------------------------------------------------

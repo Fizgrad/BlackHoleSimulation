@@ -61,6 +61,24 @@
         margin: 0;
         accent-color: #9ecbff;
       }
+      #controls button {
+        margin-top: 8px;
+        padding: 4px 10px;
+        border: 1px solid rgba(255, 255, 255, 0.25);
+        border-radius: 4px;
+        background: rgba(158, 203, 255, 0.15);
+        color: rgba(255, 255, 255, 0.9);
+        font-size: 11px;
+        cursor: pointer;
+        width: 100%;
+      }
+      #controls button:hover {
+        background: rgba(158, 203, 255, 0.28);
+      }
+      #controls button:disabled {
+        opacity: 0.4;
+        cursor: wait;
+      }
       #fps {
         position: fixed;
         top: 8px;
@@ -83,6 +101,7 @@
       <label><input id="toggle-photon-ring" type="checkbox" checked /> Photon ring</label>
       <label><input id="toggle-jets" type="checkbox" checked /> Relativistic jets</label>
       <label><input id="toggle-nebulae" type="checkbox" checked /> Nebulae / galaxies</label>
+      <button id="capture-4k">Capture 4K PNG</button>
     </div>
     <div id="hud">drag: orbit · wheel: zoom</div>
     <div id="fps">— fps</div>
