@@ -44,6 +44,14 @@ uniform bool u_showPhotonRing;
 uniform bool u_showJets;
 uniform bool u_showNebulae;
 
+#define GAL_MAX 7
+uniform sampler2DArray u_galaxyTex;
+uniform int   u_galaxyCount;
+uniform vec3  u_galaxyCenter[GAL_MAX];
+uniform float u_galaxyScale[GAL_MAX];
+uniform vec3  u_galaxyElong[GAL_MAX];
+uniform float u_galaxyEllip[GAL_MAX];
+
 // --- noise primitives ---------------------------------------------------
 
 float hash31(vec3 p) {
@@ -333,108 +341,57 @@ vec3 nebulaBlob(vec3 dir, vec3 center, float size, vec3 baseCol, float seed) {
   return baseCol * shape * radial * 0.18;
 }
 
-// Distant galaxy with spiral arms, dust lanes, and H-II knots.
-// type: 0 = elliptical (smooth radial), 1 = spiral (arms + knots).
-// angScale controls angular size; core dominates for very small sizes.
-// elongDir + ellip give disk plane orientation.
-vec3 distantGalaxy(vec3 dir, vec3 center, float angScale, float seed,
-                   vec3 coreCol, vec3 diskCol, vec3 dustCol,
-                   vec3 elongDir, float ellip, int type) {
-  float ca = clamp(dot(dir, center), -1.0, 1.0);
-  float angDist = acos(ca);
-  vec3 tanU = normalize(cross(center, elongDir));
-  vec3 tanV = cross(center, tanU);
-  float dotU = dot(dir, tanU);
-  float dotV = dot(dir, tanV);
-  float r = angDist * angScale;
-  if (r > 2.5) return vec3(0.0);
-
-  float vStretched = dotV * mix(1.0, 2.2, ellip);
-  float rE = sqrt(dotU * dotU + vStretched * vStretched) * angScale * mix(1.0, 1.4, ellip);
-  float theta = atan(vStretched, dotU);
-
-  float halo  = exp(-rE * rE * 0.8);
-  float core  = exp(-rE * rE * 14.0);
-  float bulge = exp(-rE * rE * 3.5);
-
+// Textured galaxy renderer: samples a real galaxy photo from a 2D array
+// texture, mapped onto the sky via tangent-plane projection with
+// elongation + orientation. Black background in the texture is treated
+// as transparent via a luminance threshold.
+vec3 texturedGalaxies(vec3 dir) {
+  if (u_galaxyCount == 0) return vec3(0.0);
   vec3 col = vec3(0.0);
+  for (int i = 0; i < GAL_MAX; i++) {
+    if (i >= u_galaxyCount) break;
+    vec3 center = u_galaxyCenter[i];
+    float angScale = u_galaxyScale[i];
+    vec3 elongDir = u_galaxyElong[i];
+    float ellip = u_galaxyEllip[i];
 
-  // --- elliptical: bright warm bulge + diffuse halo ---
-  if (type == 0) {
-    float n = fbm(vec3(dotU * 1.5, vStretched * 1.5, seed), 4) * 0.3;
-    float grad = smoothstep(1.8, 0.0, rE) * (0.6 + 0.4 * n);
-    vec3 innerCol = mix(diskCol, coreCol, smoothstep(0.8, 0.0, rE));
-    col  = innerCol * halo * grad * 0.18;
-    col += coreCol * (core * 0.9 + bulge * 0.15);
-    return col;
+    float ca = clamp(dot(dir, center), -1.0, 1.0);
+    float angDist = acos(ca);
+    if (angDist > 0.15) continue;  // early reject: far from galaxy
+
+    vec3 tanU = normalize(cross(center, elongDir));
+    vec3 tanV = cross(center, tanU);
+    float du = dot(dir, tanU);
+    float dv = dot(dir, tanV);
+
+    float stretch = mix(1.0, 2.2, ellip);
+    // Map tangent-plane coords to UV [0,1]. Dividing V by stretch makes
+    // the galaxy appear elongated along V (the elongation direction).
+    float uCoord = du * angScale;
+    float vCoord = dv * angScale / stretch;
+    if (abs(uCoord) > 1.0 || abs(vCoord) > 1.0) continue;
+
+    vec2 uv = vec2(uCoord, vCoord) * 0.5 + 0.5;
+    vec4 texel = texture(u_galaxyTex, vec3(uv, float(i)));
+
+    // Black background -> transparent. Soft threshold preserves faint
+    // outer arms while cutting the pure-black sky.
+    float lum = max(texel.r, max(texel.g, texel.b));
+    float alpha = smoothstep(0.015, 0.08, lum);
+
+    // Soft circular falloff at texture edges.
+    float rNorm = sqrt(uCoord * uCoord + vCoord * vCoord);
+    alpha *= smoothstep(1.0, 0.75, rNorm);
+
+    col += texel.rgb * alpha;
   }
-
-  // --- spiral galaxy ---
-
-  // Radial colour gradient: inner = warm yellow/red (old stars),
-  // outer = blue (young stars + star formation regions).
-  vec3 armCol = mix(vec3(0.12, 0.10, 0.08),
-                    diskCol,
-                    smoothstep(0.2, 1.2, rE));
-  vec3 outerCol = mix(armCol,
-                      vec3(0.08, 0.12, 0.22),
-                      smoothstep(1.0, 2.2, rE));
-
-  // Logarithmic spiral arms (2 arms) with FBM perturbation for wispy look.
-  float armPitch = mix(1.8, 2.5, ellip);
-  float arms = 0.0;
-  for (int a = 0; a < 2; a++) {
-    float armAng = theta - log(max(rE, 1e-4)) * armPitch + float(a) * 3.14159 + seed * 0.7;
-    float perturb = (fbm(vec3(dotU * 3.0, vStretched * 3.0, seed + float(a) * 7.0), 3) - 0.5) * 0.6;
-    float arm = abs(sin(armAng + perturb));
-    arms += 1.0 - smoothstep(0.0, 0.22, arm);
-  }
-  arms = clamp(arms * 0.4, 0.0, 1.0);
-  arms *= smoothstep(0.15, 0.5, rE) * (1.0 - smoothstep(1.3, 2.3, rE));
-
-  // Clumpy FBM modulation on arms.
-  float nClump = fbm(vec3(dotU * 3.0, vStretched * 3.0, seed + 5.0), 4);
-  arms *= mix(0.3, 1.2, nClump);
-
-  // Dust lanes: dark S-shaped silhouettes along inner edge of arms.
-  float dustLanes = 0.0;
-  for (int d = 0; d < 2; d++) {
-    float dAng = theta - log(max(rE, 1e-4)) * armPitch * 0.88 + float(d) * 3.14159 + seed * 1.3 + 0.15;
-    float dPerturb = (fbm(vec3(dotU * 2.5, vStretched * 2.5, seed + 99.0 + float(d) * 3.0), 3) - 0.5) * 0.4;
-    dustLanes += 1.0 - smoothstep(0.0, 0.10, abs(sin(dAng + dPerturb)));
-  }
-  dustLanes = clamp(dustLanes * 0.55, 0.0, 1.0);
-  dustLanes *= smoothstep(0.25, 0.7, rE) * (1.0 - smoothstep(1.5, 2.2, rE));
-
-  // H-II regions: bright pink H-alpha knots placed ALONG the arms.
-  float knots = 0.0;
-  for (int k = 0; k < 16; k++) {
-    float ka = float(k) * 1.884 + seed * 3.1;
-    float kr = 0.20 + hash21(vec2(seed * 0.1 + float(k), 0.5)) * 1.5;
-    float knotArmAng = ka - log(max(kr, 1e-4)) * armPitch + seed * 0.7;
-    vec2 kp = vec2(cos(knotArmAng), sin(knotArmAng) * mix(1.0, 2.2, ellip)) * kr;
-    float kd = length(vec2(dotU * angScale, vStretched * angScale) - kp);
-    float sizeMult = 0.4 + hash21(vec2(float(k), seed)) * 1.2;
-    knots += exp(-kd * kd * (50.0 + 70.0 * sizeMult)) *
-             smoothstep(0.15, 0.6, kr) * (1.0 - smoothstep(1.5, 2.2, kr));
-  }
-
-  // Composite.
-  col  = outerCol * halo * mix(0.06, 0.14, rE / max(rE + 0.3, 1e-4));
-  col += outerCol * arms * 0.18;
-  col *= 1.0 - dustLanes * 0.7;
-  vec3 bulgeCol = mix(coreCol, vec3(1.0, 0.92, 0.72), 0.3);
-  col += bulgeCol * (core * 0.8 + bulge * 0.12);
-  col += vec3(0.90, 0.35, 0.40) * knots * 0.15;
-
   return col;
 }
 
-// Several nebula regions and small distant galaxies scattered across the sky.
+// Several nebula regions and textured distant galaxies across the sky.
 vec3 nebulae(vec3 dir) {
   vec3 col = vec3(0.0);
 
-  // Eagle/hyades-ish patches.
   // Emission nebulae with astronomically accurate colours:
   //   H-alpha (656nm):  deep red / pink    (Orion, Eagle, Lagoon)
   //   OIII   (500nm):   blue-green / teal  (planetary nebulae)
@@ -446,65 +403,8 @@ vec3 nebulae(vec3 dir) {
   col += nebulaBlob(dir, normalize(vec3( 0.6, -0.7, -0.2)), 150.0, vec3(0.15, 0.30, 0.75), 13.7);  // reflection blue
   col += nebulaBlob(dir, normalize(vec3(-0.3,  0.2, -0.8)), 220.0, vec3(0.12, 0.50, 0.45), 18.4);  // OIII blue-green
 
-  // Distant galaxies with spiral arms, dust lanes, H-II knots.
-  // type 0=elliptical (smooth), 1=spiral (armed).
-  // angScale: larger = smaller on sky. ~40 = medium, ~70 = small, ~25 = large.
-
-  // Large face-on spiral (Andromeda-ish), blue-white arms.
-  col += distantGalaxy(dir, normalize(vec3(0.55, 0.50, -0.58)),
-    30.0, 0.0,
-    vec3(0.55, 0.60, 0.72),
-    vec3(0.10, 0.14, 0.22),
-    vec3(0.04, 0.05, 0.08),
-    normalize(vec3(1.0, 0.2, 0.0)), 0.55, 1);
-
-  // Elliptical, warm yellow-orange, smooth radial.
-  col += distantGalaxy(dir, normalize(vec3(-0.45, -0.25, -0.80)),
-    38.0, 1.7,
-    vec3(0.65, 0.52, 0.32),
-    vec3(0.18, 0.13, 0.08),
-    vec3(0.05, 0.03, 0.02),
-    normalize(vec3(0.0, 0.8, 0.6)), 0.45, 0);
-
-  // Compact blue spiral (M33 / Triangulum style).
-  col += distantGalaxy(dir, normalize(vec3(-0.70, 0.50, -0.40)),
-    50.0, 3.2,
-    vec3(0.45, 0.58, 0.72),
-    vec3(0.08, 0.12, 0.20),
-    vec3(0.03, 0.04, 0.07),
-    normalize(vec3(0.6, 0.0, 0.8)), 0.40, 1);
-
-  // Small irregular / dwarf, pale blue wisps.
-  col += distantGalaxy(dir, normalize(vec3(0.20, -0.75, 0.55)),
-    60.0, 5.0,
-    vec3(0.32, 0.42, 0.55),
-    vec3(0.06, 0.09, 0.14),
-    vec3(0.02, 0.03, 0.05),
-    normalize(vec3(0.3, 0.9, 0.0)), 0.25, 1);
-
-  // Red elliptical, distant.
-  col += distantGalaxy(dir, normalize(vec3(-0.25, 0.60, 0.68)),
-    55.0, 8.1,
-    vec3(0.60, 0.40, 0.22),
-    vec3(0.14, 0.08, 0.04),
-    vec3(0.04, 0.02, 0.01),
-    normalize(vec3(0.1, 0.0, 0.9)), 0.35, 0);
-
-  // Starburst galaxy, blue-white arms + H-alpha pink knots.
-  col += distantGalaxy(dir, normalize(vec3(0.40, -0.35, -0.75)),
-    45.0, 10.4,
-    vec3(0.90, 0.85, 0.75),
-    vec3(0.10, 0.15, 0.25),
-    vec3(0.03, 0.02, 0.06),
-    normalize(vec3(0.5, 0.7, 0.0)), 0.45, 1);
-
-  // Barred spiral, warm core, dusty disk.
-  col += distantGalaxy(dir, normalize(vec3(-0.55, -0.60, 0.40)),
-    35.0, 13.9,
-    vec3(0.58, 0.50, 0.38),
-    vec3(0.12, 0.10, 0.06),
-    vec3(0.04, 0.03, 0.02),
-    normalize(vec3(0.9, 0.0, 0.3)), 0.50, 1);
+  // Real galaxy textures (loaded from public/galaxies/*.png).
+  col += texturedGalaxies(dir);
 
   return col;
 }

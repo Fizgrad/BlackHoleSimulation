@@ -43,6 +43,36 @@ const U = getUniformLocations(gl, sceneProgram, [
   'u_showPhotonRing',
   'u_showJets',
   'u_showNebulae',
+  'u_galaxyTex',
+  'u_galaxyCount',
+  'u_galaxyCenter[0]',
+  'u_galaxyCenter[1]',
+  'u_galaxyCenter[2]',
+  'u_galaxyCenter[3]',
+  'u_galaxyCenter[4]',
+  'u_galaxyCenter[5]',
+  'u_galaxyCenter[6]',
+  'u_galaxyScale[0]',
+  'u_galaxyScale[1]',
+  'u_galaxyScale[2]',
+  'u_galaxyScale[3]',
+  'u_galaxyScale[4]',
+  'u_galaxyScale[5]',
+  'u_galaxyScale[6]',
+  'u_galaxyElong[0]',
+  'u_galaxyElong[1]',
+  'u_galaxyElong[2]',
+  'u_galaxyElong[3]',
+  'u_galaxyElong[4]',
+  'u_galaxyElong[5]',
+  'u_galaxyElong[6]',
+  'u_galaxyEllip[0]',
+  'u_galaxyEllip[1]',
+  'u_galaxyEllip[2]',
+  'u_galaxyEllip[3]',
+  'u_galaxyEllip[4]',
+  'u_galaxyEllip[5]',
+  'u_galaxyEllip[6]',
 ] as const);
 
 const Udown = getUniformLocations(gl, downsampleProgram, [
@@ -81,6 +111,119 @@ const physics = {
   maxSteps: 400,
   dPhi: 0.035,
 };
+
+// --- galaxy textures (real Hubble images) --------------------------------
+
+interface GalaxyData {
+  file: string;
+  center: [number, number, number];
+  scale: number;
+  elong: [number, number, number];
+  ellip: number;
+}
+
+const galaxyList: GalaxyData[] = [
+  { file: 'm31.png',     center: [0.55, 0.50, -0.58], scale: 30, elong: [1.0, 0.2, 0.0], ellip: 0.55 },
+  { file: 'm51.png',     center: [-0.70, 0.50, -0.40], scale: 50, elong: [0.6, 0.0, 0.8], ellip: 0.40 },
+  { file: 'm104.png',    center: [-0.45, -0.25, -0.80], scale: 38, elong: [0.0, 0.8, 0.6], ellip: 0.45 },
+  { file: 'm82.png',     center: [0.40, -0.35, -0.75], scale: 45, elong: [0.5, 0.7, 0.0], ellip: 0.45 },
+  { file: 'ngc1300.png', center: [-0.55, -0.60, 0.40], scale: 35, elong: [0.9, 0.0, 0.3], ellip: 0.50 },
+  { file: 'm87.png',     center: [-0.25, 0.60, 0.68], scale: 55, elong: [0.1, 0.0, 0.9], ellip: 0.35 },
+  { file: 'ngc4565.png', center: [0.20, -0.75, 0.55], scale: 42, elong: [0.3, 0.9, 0.0], ellip: 0.50 },
+];
+
+let galaxyTex: WebGLTexture | null = null;
+let galaxyCount = 0;
+
+function normalize3(v: [number, number, number]): [number, number, number] {
+  const l = Math.hypot(v[0], v[1], v[2]) || 1;
+  return [v[0] / l, v[1] / l, v[2] / l];
+}
+
+async function loadGalaxyTextures(): Promise<void> {
+  const TEX_SIZE = 256;
+  const images: HTMLImageElement[] = [];
+  const loaded: boolean[] = [];
+
+  for (let i = 0; i < galaxyList.length; i++) {
+    loaded.push(false);
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => { loaded[i] = true; };
+    img.onerror = () => { loaded[i] = false; };
+    img.src = `${import.meta.env.BASE_URL}galaxies/${galaxyList[i].file}`;
+    images.push(img);
+  }
+
+  await Promise.all(images.map(img => {
+    if (img.complete) return Promise.resolve();
+    return new Promise<void>(resolve => {
+      img.onload = () => resolve();
+      img.onerror = () => resolve();
+    });
+  }));
+
+  const validIndices: number[] = [];
+  for (let i = 0; i < images.length; i++) {
+    if (loaded[i] && images[i].naturalWidth > 0) validIndices.push(i);
+  }
+  if (validIndices.length === 0) return;
+
+  galaxyCount = validIndices.length;
+  const tex = gl.createTexture();
+  if (!tex) return;
+  gl.bindTexture(gl.TEXTURE_2D_ARRAY, tex);
+  gl.texStorage3D(gl.TEXTURE_2D_ARRAY, 1, gl.RGBA8, TEX_SIZE, TEX_SIZE, galaxyCount);
+
+  const canvas2d = document.createElement('canvas');
+  canvas2d.width = TEX_SIZE;
+  canvas2d.height = TEX_SIZE;
+  const ctx2d = canvas2d.getContext('2d');
+  if (!ctx2d) return;
+
+  for (let layer = 0; layer < validIndices.length; layer++) {
+    const idx = validIndices[layer];
+    ctx2d.clearRect(0, 0, TEX_SIZE, TEX_SIZE);
+    // Cover-fit the image into the square.
+    const img = images[idx];
+    const iw = img.naturalWidth;
+    const ih = img.naturalHeight;
+    const scale = Math.max(TEX_SIZE / iw, TEX_SIZE / ih);
+    const dw = iw * scale;
+    const dh = ih * scale;
+    ctx2d.drawImage(img, (TEX_SIZE - dw) / 2, (TEX_SIZE - dh) / 2, dw, dh);
+    const pixels = ctx2d.getImageData(0, 0, TEX_SIZE, TEX_SIZE);
+    gl.texSubImage3D(
+      gl.TEXTURE_2D_ARRAY, 0, 0, 0, layer,
+      TEX_SIZE, TEX_SIZE, 1,
+      gl.RGBA, gl.UNSIGNED_BYTE, pixels.data,
+    );
+
+    // Update galaxy data to match the valid (loaded) set.
+    const g = galaxyList[idx];
+    const c = normalize3(g.center);
+    const e = normalize3(g.elong);
+    gl.uniform3f(U[`u_galaxyCenter[${layer}]` as keyof typeof U], c[0], c[1], c[2]);
+    gl.uniform1f(U[`u_galaxyScale[${layer}]` as keyof typeof U], g.scale);
+    gl.uniform3f(U[`u_galaxyElong[${layer}]` as keyof typeof U], e[0], e[1], e[2]);
+    gl.uniform1f(U[`u_galaxyEllip[${layer}]` as keyof typeof U], g.ellip);
+  }
+
+  gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+  galaxyTex = tex;
+  gl.useProgram(sceneProgram);
+  gl.uniform1i(U.u_galaxyCount, galaxyCount);
+  gl.activeTexture(gl.TEXTURE2);
+  gl.bindTexture(gl.TEXTURE_2D_ARRAY, galaxyTex);
+  gl.uniform1i(U.u_galaxyTex, 2);
+}
+
+// Kick off async loading; galaxyCount stays 0 until loaded.
+loadGalaxyTextures();
 
 const DPR_CAP = 1.5;
 
