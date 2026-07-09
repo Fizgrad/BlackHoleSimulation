@@ -268,16 +268,42 @@ function renderComposite(): void {
   gl.drawArrays(gl.TRIANGLES, 0, 3);
 }
 
+// --- FPS HUD --------------------------------------------------------------
+
+const fpsEl = document.getElementById('fps');
+let lastFrameTime = performance.now();
+let emaFrameMs = 16.7;
+let lastFpsRefresh = 0;
+
+function updateFps(now: number): void {
+  const dt = now - lastFrameTime;
+  lastFrameTime = now;
+  if (dt > 0 && dt < 1000) {
+    emaFrameMs += (dt - emaFrameMs) * 0.1;
+  }
+  if (fpsEl && now - lastFpsRefresh > 250) {
+    const fps = 1000 / Math.max(emaFrameMs, 0.01);
+    fpsEl.textContent = `${fps.toFixed(0).padStart(3, ' ')} fps  ${emaFrameMs.toFixed(1).padStart(4, ' ')} ms`;
+    lastFpsRefresh = now;
+  }
+}
+
+// --- render loop ----------------------------------------------------------
+
+let capturing = false;
+
 function frame(): void {
-  resize();
-  const now = performance.now();
-  const t = (now - t0) * 0.001 + 42.0;
-
-  renderScene(t);
-  if (features.bloom) renderBloom();
-  renderComposite();
-
-  updateFps(now);
+  if (!capturing) {
+    resize();
+    const now = performance.now();
+    const t = (now - t0) * 0.001 + 42.0;
+    renderScene(t);
+    if (features.bloom) renderBloom();
+    renderComposite();
+    updateFps(now);
+  }
+  requestAnimationFrame(frame);
+}
 
 requestAnimationFrame(frame);
 
@@ -286,16 +312,15 @@ requestAnimationFrame(frame);
 const capture4kBtn = document.getElementById('capture-4k') as HTMLButtonElement | null;
 
 function capture4K(): void {
-  if (!capture4kBtn) return;
+  if (capturing || !capture4kBtn) return;
+  capturing = true;
   capture4kBtn.disabled = true;
   capture4kBtn.textContent = 'Rendering 4K...';
 
-  // Defer to next frame so the button text updates before the heavy GPU work.
-  requestAnimationFrame(() => {
+  setTimeout(() => {
     const W = 3840;
     const H = 2160;
 
-    // Resize all render targets to 4K.
     resizeRenderTarget(gl, sceneRT, W, H);
     let mw = W;
     let mh = H;
@@ -305,30 +330,24 @@ function capture4K(): void {
       resizeRenderTarget(gl, bloomMips[i], mw, mh);
     }
 
-    // Render one frame at 4K.
+    canvas!.width = W;
+    canvas!.height = H;
+    gl.viewport(0, 0, W, H);
+
     const t = (performance.now() - t0) * 0.001 + 42.0;
     renderScene(t);
     if (features.bloom) renderBloom();
     renderComposite();
 
-    // Read pixels from the default framebuffer (canvas-bound).
-    // Must be called synchronously right after the draw, before
-    // the browser composites (preserveDrawingBuffer is false).
-    canvas!.width = W;
-    canvas!.height = H;
-    gl.viewport(0, 0, W, H);
-    // Re-render composite to the 4K canvas.
-    renderComposite();
-
     const pixels = new Uint8Array(W * H * 4);
     gl.readPixels(0, 0, W, H, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
 
-    // Flip Y (WebGL origin is bottom-left) and build an ImageData.
     const off = document.createElement('canvas');
     off.width = W;
     off.height = H;
     const ctx2d = off.getContext('2d');
     if (!ctx2d) {
+      capturing = false;
       capture4kBtn.disabled = false;
       capture4kBtn.textContent = 'Capture 4K PNG';
       return;
@@ -338,13 +357,10 @@ function capture4K(): void {
     for (let y = 0; y < H; y++) {
       const srcRow = (H - 1 - y) * W * 4;
       const dstRow = y * W * 4;
-      for (let x = 0; x < W * 4; x++) {
-        dst[dstRow + x] = pixels[srcRow + x];
-      }
+      dst.set(pixels.subarray(srcRow, srcRow + W * 4), dstRow);
     }
     ctx2d.putImageData(imgData, 0, 0);
 
-    // Trigger download.
     off.toBlob((blob) => {
       if (blob) {
         const url = URL.createObjectURL(blob);
@@ -356,35 +372,12 @@ function capture4K(): void {
         a.remove();
         URL.revokeObjectURL(url);
       }
-      // Restore normal resolution.
+      capturing = false;
       capture4kBtn.disabled = false;
       capture4kBtn.textContent = 'Capture 4K PNG';
       resize();
     }, 'image/png');
-  });
+  }, 50);
 }
 
 capture4kBtn?.addEventListener('click', capture4K);
-}
-
-// --- FPS HUD --------------------------------------------------------------
-
-const fpsEl = document.getElementById('fps');
-let lastFrameTime = performance.now();
-let emaFrameMs = 16.7; // smoothed frame time
-let lastFpsRefresh = 0;
-
-function updateFps(now: number): void {
-  const dt = now - lastFrameTime;
-  lastFrameTime = now;
-  if (dt > 0 && dt < 1000) {
-    // EMA with ~10-frame window for stability.
-    emaFrameMs += (dt - emaFrameMs) * 0.1;
-  }
-  if (fpsEl && now - lastFpsRefresh > 250) {
-    const fps = 1000 / Math.max(emaFrameMs, 0.01);
-    fpsEl.textContent = `${fps.toFixed(0).padStart(3, ' ')} fps  ${emaFrameMs.toFixed(1).padStart(4, ' ')} ms`;
-    lastFpsRefresh = now;
-  }
-}
-requestAnimationFrame(frame);
