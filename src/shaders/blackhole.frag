@@ -426,12 +426,16 @@ vec3 nebulae(vec3 dir) {
   vec3 col = vec3(0.0);
 
   // Eagle/hyades-ish patches.
-  col += nebulaBlob(dir, normalize(vec3( 0.4,  0.6,  0.6)), 240.0, vec3(0.25, 0.06, 0.32), 0.0);
-  col += nebulaBlob(dir, normalize(vec3(-0.5,  0.7, -0.4)), 200.0, vec3(0.20, 0.04, 0.28), 3.1);
-  col += nebulaBlob(dir, normalize(vec3( 0.2, -0.5,  0.8)), 180.0, vec3(0.06, 0.22, 0.36), 7.9);
-  col += nebulaBlob(dir, normalize(vec3(-0.7, -0.3,  0.5)), 260.0, vec3(0.32, 0.08, 0.10), 11.2);
-  col += nebulaBlob(dir, normalize(vec3( 0.6, -0.7, -0.2)), 150.0, vec3(0.08, 0.18, 0.30), 13.7);
-  col += nebulaBlob(dir, normalize(vec3(-0.3,  0.2, -0.8)), 220.0, vec3(0.30, 0.12, 0.28), 18.4);
+  // Emission nebulae with astronomically accurate colours:
+  //   H-alpha (656nm):  deep red / pink    (Orion, Eagle, Lagoon)
+  //   OIII   (500nm):   blue-green / teal  (planetary nebulae)
+  //   Reflection:       blue               (Pleiades nebulosity)
+  col += nebulaBlob(dir, normalize(vec3( 0.4,  0.6,  0.6)), 240.0, vec3(0.85, 0.15, 0.20), 0.0);   // H-alpha red
+  col += nebulaBlob(dir, normalize(vec3(-0.5,  0.7, -0.4)), 200.0, vec3(0.70, 0.10, 0.15), 3.1);   // H-alpha deep red
+  col += nebulaBlob(dir, normalize(vec3( 0.2, -0.5,  0.8)), 180.0, vec3(0.10, 0.55, 0.50), 7.9);   // OIII teal
+  col += nebulaBlob(dir, normalize(vec3(-0.7, -0.3,  0.5)), 260.0, vec3(0.80, 0.20, 0.25), 11.2);  // H-alpha pink
+  col += nebulaBlob(dir, normalize(vec3( 0.6, -0.7, -0.2)), 150.0, vec3(0.15, 0.30, 0.75), 13.7);  // reflection blue
+  col += nebulaBlob(dir, normalize(vec3(-0.3,  0.2, -0.8)), 220.0, vec3(0.12, 0.50, 0.45), 18.4);  // OIII blue-green
 
   // Distant galaxies with spiral arms, dust lanes, H-II knots.
   // type 0=elliptical (smooth), 1=spiral (armed).
@@ -562,10 +566,9 @@ vec3 sampleStars(vec3 dir) {
   // produce the "milky" speckle that gives the sky depth without obvious
   // tiling.
   vec3 stars = vec3(0.0);
-  stars += starLayer(dir, 0.06,  120.0,  1.0, plane) * 1.4;
-  stars += starLayer(dir, 0.18,  320.0,  9.7, plane) * 0.8;
-  stars += starLayer(dir, 0.45,  800.0, 17.3, plane) * 0.35;
-  stars += starLayer(dir, 0.85, 1800.0, 31.1, plane) * 0.12;
+  stars += starLayer(dir, 0.05,  120.0,  1.0, plane) * 1.4;
+  stars += starLayer(dir, 0.14,  320.0,  9.7, plane) * 0.8;
+  stars += starLayer(dir, 0.30,  800.0, 17.3, plane) * 0.30;
 
   // Selective extinction: dust reddens stars instead of just dimming.
   vec3 ext = dustExtinction(dir);
