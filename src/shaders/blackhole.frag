@@ -342,81 +342,90 @@ vec3 distantGalaxy(vec3 dir, vec3 center, float angScale, float seed,
                    vec3 elongDir, float ellip, int type) {
   float ca = clamp(dot(dir, center), -1.0, 1.0);
   float angDist = acos(ca);
-  // Project to tangent plane coords (u,v) centred on the galaxy.
   vec3 tanU = normalize(cross(center, elongDir));
   vec3 tanV = cross(center, tanU);
   float dotU = dot(dir, tanU);
   float dotV = dot(dir, tanV);
-  float r = angDist * angScale;  // 0 at centre, ~1 at halo edge
-
+  float r = angDist * angScale;
   if (r > 2.5) return vec3(0.0);
 
-  // Ellipticity: stretch V axis.
   float vStretched = dotV * mix(1.0, 2.2, ellip);
   float rE = sqrt(dotU * dotU + vStretched * vStretched) * angScale * mix(1.0, 1.4, ellip);
-
-  // Azimuthal angle in disk plane.
   float theta = atan(vStretched, dotU);
 
   float halo  = exp(-rE * rE * 0.8);
-  float core  = exp(-rE * rE * 12.0);
-  float bulge = exp(-rE * rE * 3.0);
+  float core  = exp(-rE * rE * 14.0);
+  float bulge = exp(-rE * rE * 3.5);
 
   vec3 col = vec3(0.0);
 
-  // Elliptical (smooth radial gradient + slight isophotal twist).
+  // --- elliptical: bright warm bulge + diffuse halo ---
   if (type == 0) {
     float n = fbm(vec3(dotU * 1.5, vStretched * 1.5, seed), 4) * 0.3;
-    float grad = smoothstep(1.6, 0.0, rE) * (0.6 + 0.4 * n);
-    col  = diskCol * halo * grad * 0.12;
-    col += coreCol * (core * 0.6 + bulge * 0.1);
+    float grad = smoothstep(1.8, 0.0, rE) * (0.6 + 0.4 * n);
+    vec3 innerCol = mix(diskCol, coreCol, smoothstep(0.8, 0.0, rE));
+    col  = innerCol * halo * grad * 0.18;
+    col += coreCol * (core * 0.9 + bulge * 0.15);
     return col;
   }
 
-  // Spiral: arms + knots + dust lanes.
-  // Logarithmic spiral arms: features align along theta + log(rE)/k = const.
+  // --- spiral galaxy ---
+
+  // Radial colour gradient: inner = warm yellow/red (old stars),
+  // outer = blue (young stars + star formation regions).
+  vec3 armCol = mix(vec3(0.12, 0.10, 0.08),
+                    diskCol,
+                    smoothstep(0.2, 1.2, rE));
+  vec3 outerCol = mix(armCol,
+                      vec3(0.08, 0.12, 0.22),
+                      smoothstep(1.0, 2.2, rE));
+
+  // Logarithmic spiral arms (2 arms) with FBM perturbation for wispy look.
   float armPitch = mix(1.8, 2.5, ellip);
   float arms = 0.0;
-  for (int a = 0; a < 3; a++) {
-    float armAng = theta - log(max(rE, 1e-4)) * armPitch + float(a) * 2.094 + seed * 0.7;
-    // Narrow arm peak: 1 on the arm, 0 away.
-    float arm = abs(sin(armAng));
-    arms += 1.0 - smoothstep(0.0, 0.18, arm);
+  for (int a = 0; a < 2; a++) {
+    float armAng = theta - log(max(rE, 1e-4)) * armPitch + float(a) * 3.14159 + seed * 0.7;
+    float perturb = (fbm(vec3(dotU * 3.0, vStretched * 3.0, seed + float(a) * 7.0), 3) - 0.5) * 0.6;
+    float arm = abs(sin(armAng + perturb));
+    arms += 1.0 - smoothstep(0.0, 0.22, arm);
   }
-  arms = clamp(arms * 0.3, 0.0, 1.0);
-  // Taper arms at centre and edge.
-  arms *= smoothstep(0.1, 0.5, rE) * (1.0 - smoothstep(1.2, 2.2, rE));
+  arms = clamp(arms * 0.4, 0.0, 1.0);
+  arms *= smoothstep(0.15, 0.5, rE) * (1.0 - smoothstep(1.3, 2.3, rE));
 
-  // Noise on arms for clumpy structure.
-  float nClump = fbm(vec3(dotU * 2.5, vStretched * 2.5, seed + 5.0), 4);
-  arms = mix(arms * 0.4, arms * nClump * 0.8, 0.6);
+  // Clumpy FBM modulation on arms.
+  float nClump = fbm(vec3(dotU * 3.0, vStretched * 3.0, seed + 5.0), 4);
+  arms *= mix(0.3, 1.2, nClump);
 
-  // Dust lanes: narrow dark ridges along the inner edge of arms.
+  // Dust lanes: dark S-shaped silhouettes along inner edge of arms.
   float dustLanes = 0.0;
   for (int d = 0; d < 2; d++) {
-    float dAng = theta - log(max(rE, 1e-4)) * armPitch * 0.85 + float(d) * 3.141 + seed * 1.3;
-    dustLanes += 1.0 - smoothstep(0.0, 0.12, abs(sin(dAng)));
+    float dAng = theta - log(max(rE, 1e-4)) * armPitch * 0.88 + float(d) * 3.14159 + seed * 1.3 + 0.15;
+    float dPerturb = (fbm(vec3(dotU * 2.5, vStretched * 2.5, seed + 99.0 + float(d) * 3.0), 3) - 0.5) * 0.4;
+    dustLanes += 1.0 - smoothstep(0.0, 0.10, abs(sin(dAng + dPerturb)));
   }
-  dustLanes = clamp(dustLanes * 0.4, 0.0, 1.0);
-  dustLanes *= smoothstep(0.2, 0.7, rE) * (1.0 - smoothstep(1.5, 2.2, rE));
+  dustLanes = clamp(dustLanes * 0.55, 0.0, 1.0);
+  dustLanes *= smoothstep(0.25, 0.7, rE) * (1.0 - smoothstep(1.5, 2.2, rE));
 
-  // H-II region bright knots: random bright spots in the disk.
+  // H-II regions: bright pink H-alpha knots placed ALONG the arms.
   float knots = 0.0;
-  for (int k = 0; k < 12; k++) {
+  for (int k = 0; k < 16; k++) {
     float ka = float(k) * 1.884 + seed * 3.1;
-    float kr = 0.25 + hash21(vec2(seed * 0.1 + float(k), 0.5)) * 1.4;
-    vec2 kp = vec2(cos(ka), sin(ka)) * kr;
+    float kr = 0.20 + hash21(vec2(seed * 0.1 + float(k), 0.5)) * 1.5;
+    float knotArmAng = ka - log(max(kr, 1e-4)) * armPitch + seed * 0.7;
+    vec2 kp = vec2(cos(knotArmAng), sin(knotArmAng) * mix(1.0, 2.2, ellip)) * kr;
     float kd = length(vec2(dotU * angScale, vStretched * angScale) - kp);
-    float sizeMult = 0.5 + hash21(vec2(float(k), seed)) * 1.0;
-    knots += exp(-kd * kd * (60.0 + 80.0 * sizeMult)) *
-             smoothstep(0.1, 0.7, kr) * (1.0 - smoothstep(1.5, 2.2, kr));
+    float sizeMult = 0.4 + hash21(vec2(float(k), seed)) * 1.2;
+    knots += exp(-kd * kd * (50.0 + 70.0 * sizeMult)) *
+             smoothstep(0.15, 0.6, kr) * (1.0 - smoothstep(1.5, 2.2, kr));
   }
 
   // Composite.
-  col  = diskCol * halo * mix(0.08, 0.18, rE / max(rE + 0.3, 1e-4));
-  col += diskCol * arms * 0.12;
-  col += coreCol * (core * 0.6 + bulge * 0.08);
-  col += coreCol * knots * 0.06;
+  col  = outerCol * halo * mix(0.06, 0.14, rE / max(rE + 0.3, 1e-4));
+  col += outerCol * arms * 0.18;
+  col *= 1.0 - dustLanes * 0.7;
+  vec3 bulgeCol = mix(coreCol, vec3(1.0, 0.92, 0.72), 0.3);
+  col += bulgeCol * (core * 0.8 + bulge * 0.12);
+  col += vec3(0.90, 0.35, 0.40) * knots * 0.15;
 
   return col;
 }
@@ -481,11 +490,11 @@ vec3 nebulae(vec3 dir) {
     vec3(0.04, 0.02, 0.01),
     normalize(vec3(0.1, 0.0, 0.9)), 0.35, 0);
 
-  // Starburst galaxy, blue-purple arms + pinkish halo.
+  // Starburst galaxy, blue-white arms + H-alpha pink knots.
   col += distantGalaxy(dir, normalize(vec3(0.40, -0.35, -0.75)),
     45.0, 10.4,
-    vec3(0.52, 0.48, 0.68),
-    vec3(0.08, 0.05, 0.14),
+    vec3(0.90, 0.85, 0.75),
+    vec3(0.10, 0.15, 0.25),
     vec3(0.03, 0.02, 0.06),
     normalize(vec3(0.5, 0.7, 0.0)), 0.45, 1);
 
