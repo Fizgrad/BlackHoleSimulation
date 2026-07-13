@@ -222,8 +222,31 @@ async function loadGalaxyTextures(): Promise<void> {
   gl.uniform1i(U.u_galaxyTex, 2);
 }
 
+// Create a dummy 1x1 2D array texture so the sampler2DArray always has
+// a valid binding, even before real galaxy images are loaded. Without
+// this, some drivers produce GL errors when the shader references an
+// unbound sampler, even if the code path is never reached.
+function createDummyArrayTexture(): WebGLTexture {
+  const tex = gl.createTexture()!;
+  gl.bindTexture(gl.TEXTURE_2D_ARRAY, tex);
+  gl.texStorage3D(gl.TEXTURE_2D_ARRAY, 1, gl.RGBA8, 1, 1, 1);
+  gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, 0, 0, 0, 0, 1, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE,
+    new Uint8Array([0, 0, 0, 0]));
+  gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  return tex;
+}
+
+gl.useProgram(sceneProgram);
+gl.uniform1i(U.u_galaxyCount, 0);
+gl.activeTexture(gl.TEXTURE2);
+gl.bindTexture(gl.TEXTURE_2D_ARRAY, createDummyArrayTexture());
+gl.uniform1i(U.u_galaxyTex, 2);
+
 // Kick off async loading; galaxyCount stays 0 until loaded.
-loadGalaxyTextures();
+loadGalaxyTextures().catch(() => { /* ignore load errors */ });
 
 const DPR_CAP = 1.5;
 
