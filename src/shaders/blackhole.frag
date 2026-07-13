@@ -19,6 +19,7 @@
 //
 
 precision highp float;
+precision highp sampler2DArray;
 
 in vec2 v_ndc;
 out vec4 fragColor;
